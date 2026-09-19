@@ -427,3 +427,20 @@ FodyWeavers.xsd
 *.msix
 *.msm
 *.msp
+# 大英默写器运行时生成的个人数据
+wrong_words.json
+wrong_words.pre-migration.json
+notebook_state.json
+study_state.json
+appearance.json
+pronunciation.json
+keybindings.json
+
+# 学习列表、备份和导入的个人背景图片
+study_lists/
+backups/
+appearance_images/
+
+# 本地构建与测试输出
+_build/
+qa-*/
