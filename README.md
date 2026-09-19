@@ -1,4 +1,4 @@
-# English-dictation-tool_kry-advanced
+[# English-dictation-tool_kry-advanced
 # 大英默写器 · KRY个人增强版
 
 这是基于 [Lucent-Snow 的 ZJU 大英默写器](https://github.com/Lucent-Snow/ZJU-English-dictation-tool) 制作的 Windows 个人增强版。原项目使用 PyQt6，本版本使用 C# 和 Windows Forms，保留自由练习，并补充每日学习、单词本管理与个性化设置。本项目不是原项目的官方版本。
@@ -50,3 +50,4 @@
 ## 反馈
 
 功能还在持续检查。如果你发现问题，请尽量说明操作步骤、预期结果和实际结果。授权确认并公开仓库后，可以通过 Issues 反馈，也欢迎提交 Pull Request。
+](https://github.com/kryptonite309)
