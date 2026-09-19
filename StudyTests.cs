@@ -162,6 +162,100 @@ namespace EnglishDictationTool
             Require(rolloverStore.ExtractNew(new Dictionary<string, int> { { "book1", 1 } },
                 rolloverDay.AddDays(1).AddMinutes(1)).items[0].word.english == "bravo",
                 "跨日撤销后单词仍在优先词池");
+
+            string independentRoot = Path.Combine(root, "independent_sessions_test");
+            string independentBook = Path.Combine(independentRoot, "data", "book1");
+            Directory.CreateDirectory(independentBook);
+            File.WriteAllText(Path.Combine(independentBook, "unit1.csv"),
+                "english,chinese,examples\nalpha,阿尔法,e.g. [[alpha]].\nbravo,布拉沃,e.g. [[bravo]].\ncharlie,查理,e.g. [[charlie]].\ndelta,德尔塔,e.g. [[delta]].\n",
+                new UTF8Encoding(false));
+            NotebookStore independentNotebooks = new NotebookStore(independentRoot);
+            DataLoader independentLoader = new DataLoader(Path.Combine(independentRoot, "data"));
+            StudyStore independentStore = new StudyStore(independentRoot, independentLoader, independentNotebooks);
+            DateTime independentDay = firstDay.AddDays(20);
+            StudyList sourceList = independentStore.ExtractNew(
+                new Dictionary<string, int> { { "book1", 2 } }, independentDay);
+            for (int step = 0; step < 6; step++) independentStore.AdvancePreview();
+            independentStore.Submit("alpha", independentDay.AddMinutes(1));
+            independentStore.Submit("bravo", independentDay.AddMinutes(2));
+            StudyList unfinishedNew = independentStore.ExtractNew(
+                new Dictionary<string, int> { { "book1", 2 } }, independentDay.AddDays(1));
+            StudyList unfinishedReview = independentStore.StartListReview(independentDay.AddDays(1).AddMinutes(1));
+            independentNotebooks.MoveToNotebook(sourceList.items[0].word, Notebooks.Wrong);
+            StudyList unfinishedProblems = independentStore.StartProblemReview(
+                independentDay.AddDays(1).AddMinutes(1).AddSeconds(1));
+            Require(independentStore.ActiveFor("new") == unfinishedNew
+                && independentStore.ActiveFor("list_review") == unfinishedReview
+                && independentStore.ActiveFor("problem_review") == unfinishedProblems
+                && independentStore.Active == unfinishedProblems, "三个每日模块分别保存未完成列表");
+            independentStore.Settings.newExample = true;
+            independentStore.Settings.newSpelling = false;
+            independentStore.SaveSettings();
+            independentStore.Resume("new");
+            for (int step = 0; step < 6; step++) independentStore.AdvancePreview();
+            Require(independentStore.CurrentTask().mode == "example"
+                && independentStore.Active.tasks.All(x => x.mode == "example"),
+                "重新进入时立即应用新学题型设置");
+            independentStore.Settings.newExample = false;
+            independentStore.Settings.newSpelling = true;
+            independentStore.SaveSettings();
+            independentStore.Resume("new");
+            Require(independentStore.CurrentTask().mode == "spelling"
+                && independentStore.Active.tasks.All(x => x.mode == "spelling"),
+                "再次更改题型后重建未完成题目");
+            independentStore.Submit("charlie", independentDay.AddDays(1).AddMinutes(2));
+            StudyEndResult endedNew = independentStore.EndActive("new",
+                independentDay.AddDays(1).AddMinutes(3));
+            Require(endedNew.kept == 1 && endedNew.released == 1
+                && independentStore.ActiveFor("new") == null
+                && independentStore.ActiveFor("list_review") != null
+                && independentStore.ActiveFor("problem_review") != null,
+                "手动结束新学仅保留完成词且不影响复习模块");
+            StudyList priorityList = independentStore.ExtractNew(
+                new Dictionary<string, int> { { "book1", 1 } }, independentDay.AddDays(1).AddMinutes(4));
+            Require(priorityList.items[0].word.english == "delta" && priorityList.items[0].carriedOver,
+                "手动结束释放词回到新词池顶端");
+            independentStore.Settings.listExample = false;
+            independentStore.Settings.listSpelling = true;
+            independentStore.SaveSettings();
+            independentStore.Resume("list_review");
+            independentStore.Submit("alpha", independentDay.AddDays(1).AddMinutes(5));
+            StudyEndResult endedReview = independentStore.EndActive("list_review",
+                independentDay.AddDays(1).AddMinutes(6));
+            Require(endedReview.kept == 1 && endedReview.released == 1,
+                "手动结束历史复习只保留已完成词");
+            StudyList resumedReview = independentStore.StartListReview(independentDay.AddDays(1).AddMinutes(7));
+            Require(resumedReview.items.Count == 1 && resumedReview.items[0].word.english == "bravo",
+                "历史复习未完成词可在当天重新进入后续列表");
+
+            string libraryRoot = Path.Combine(root, "library_import_test");
+            Directory.CreateDirectory(Path.Combine(libraryRoot, "data", "book1"));
+            File.WriteAllText(Path.Combine(libraryRoot, "data", "book1", "unit1.csv"),
+                "english,chinese\nbase,基础\n", new UTF8Encoding(false));
+            string externalCsv = Path.Combine(libraryRoot, "external.csv");
+            File.WriteAllText(externalCsv,
+                "english,chinese,examples\nimported,导入的,e.g. [[imported]].\n", new UTF8Encoding(false));
+            DataLoader libraryLoader = new DataLoader(Path.Combine(libraryRoot, "data"));
+            Require(libraryLoader.ValidateCsvFile(externalCsv) == 1, "外部 CSV 表头与词数校验");
+            libraryLoader.ImportCsv(externalCsv, "custom", "unitA", false);
+            Require(libraryLoader.GetAvailableBooks().Contains("custom")
+                && libraryLoader.LoadWordList("custom", new[] { "unitA" })[0].english == "imported",
+                "外部 CSV 导入为新词书");
+            NotebookStore libraryNotebooks = new NotebookStore(libraryRoot);
+            StudyStore libraryStore = new StudyStore(libraryRoot, libraryLoader, libraryNotebooks);
+            libraryStore.Settings.defaultBookCounts["custom"] = 4;
+            libraryStore.SaveSettings();
+            libraryStore.ExtractNew(new Dictionary<string, int> { { "custom", 1 } },
+                independentDay.AddDays(2));
+            libraryLoader.RenameBook("custom", "renamed-book");
+            libraryStore.RenameBookReferences("custom", "renamed-book");
+            StudyStore reloadedLibrary = new StudyStore(libraryRoot,
+                new DataLoader(Path.Combine(libraryRoot, "data")), new NotebookStore(libraryRoot));
+            Require(reloadedLibrary.Settings.defaultBookCounts.ContainsKey("renamed-book")
+                && !reloadedLibrary.Settings.defaultBookCounts.ContainsKey("custom")
+                && reloadedLibrary.AllWords().Any(x => x.book == "renamed-book"
+                    && x.word.english == "imported"), "词书重命名同步学习状态和默认配额");
+
             StudyStore reloaded = new StudyStore(root, loader, new NotebookStore(root));
             Require(reloaded.Lists.Count >= 3 && reloaded.Settings.fuzzyAnswers, "学习状态持久化");
             Require(reloaded.Lists.First(x => x.id == first.id).history.Count == 2,
@@ -216,7 +310,9 @@ namespace EnglishDictationTool
                 { "crossDayPriority", true }, { "undo", true }, { "fuzzyAnswers", true },
                 { "listReviewOrdering", true }, { "backupIsolation", true },
                 { "readOnlyHistory", true }, { "appearancePersistence", true },
-                { "pronunciationPersistence", true }
+                { "pronunciationPersistence", true }, { "independentSessions", true },
+                { "manualEnd", true }, { "liveQuestionSettings", true },
+                { "csvImportAndBookRename", true }
             };
             File.WriteAllText(report, new JavaScriptSerializer().Serialize(result), new UTF8Encoding(false));
             return 0;

@@ -36,6 +36,9 @@ namespace EnglishDictationTool
         private ListView dailyLists;
         private ListView backupList;
         private TextBox backupPath;
+        private ComboBox managedBook;
+        private TextBox renamedBook, importPath, importBook, importUnit;
+        private Label managedBookSummary;
 
         public StudySettingsForm(StudyStore study, NotebookStore notebookStore,
             DataLoader dataLoader, BackupService backupService, AppearanceStore appearanceStore,
@@ -72,6 +75,7 @@ namespace EnglishDictationTool
                 freeCard.Controls.Add(freePracticePanel);
             }
             BuildPlanTab(tabs);
+            BuildLibraryTab(tabs);
             BuildAnswerTab(tabs);
             BuildShortcutTab(tabs);
             BuildPronunciationTab(tabs);
@@ -211,6 +215,128 @@ namespace EnglishDictationTool
             page.Controls.Add(Button("管理可接受答案", delegate { new AcceptedAnswersForm(store, loader).ShowDialog(this); }));
             page.Controls.Add(Button("管理全部单词本", delegate { new NotebookManagerForm(loader, notebooks).ShowDialog(this); }));
             page.Controls.Add(Button("保存设置", delegate { SaveSettings(); }));
+        }
+
+        private void BuildLibraryTab(TabControl tabs)
+        {
+            FlowLayoutPanel page = Page(tabs, "词书管理");
+            page.Controls.Add(Label("可以把外部 CSV 导入现有词书或新建词书，也可以重命名整个词书。导入文件必须包含 english、chinese 两列，可另加 examples 列。", 1000));
+            managedBook = new DarkComboBox { Width = 360 };
+            managedBook.SelectedIndexChanged += delegate
+            {
+                string selected = managedBook.SelectedItem as string ?? string.Empty;
+                renamedBook.Text = selected;
+                importBook.Text = selected;
+                RefreshManagedBookSummary();
+            };
+            page.Controls.Add(Row("当前词书", managedBook, 320));
+            managedBookSummary = Label(string.Empty, 1000);
+            page.Controls.Add(managedBookSummary);
+            renamedBook = new TextBox { Width = 360 };
+            page.Controls.Add(Row("重命名为", renamedBook, 320));
+            page.Controls.Add(Button("重命名词书", delegate { RenameSelectedBook(); }));
+            page.Controls.Add(Label("导入外部 CSV", 1000));
+            importPath = new TextBox { Width = 620, ReadOnly = true };
+            page.Controls.Add(Row("所选文件", importPath, 320));
+            page.Controls.Add(Button("选择 CSV 文件", delegate { ChooseImportCsv(); }));
+            importBook = new TextBox { Width = 360 };
+            importUnit = new TextBox { Width = 360 };
+            page.Controls.Add(Row("导入到词书（可输入新名称）", importBook, 320));
+            page.Controls.Add(Row("单元名称", importUnit, 320));
+            page.Controls.Add(Button("导入 CSV", delegate { ImportCsv(); }));
+            RefreshManagedBooks(null);
+        }
+
+        private void RefreshManagedBooks(string select)
+        {
+            List<string> books = loader.GetAvailableBooks();
+            managedBook.Items.Clear();
+            managedBook.Items.AddRange(books.Cast<object>().ToArray());
+            if (!string.IsNullOrWhiteSpace(select))
+            {
+                int index = books.FindIndex(x => string.Equals(x, select, StringComparison.OrdinalIgnoreCase));
+                if (index >= 0) managedBook.SelectedIndex = index;
+            }
+            if (managedBook.SelectedIndex < 0 && managedBook.Items.Count > 0) managedBook.SelectedIndex = 0;
+            RefreshManagedBookSummary();
+        }
+
+        private void RefreshManagedBookSummary()
+        {
+            string book = managedBook == null ? null : managedBook.SelectedItem as string;
+            if (string.IsNullOrWhiteSpace(book))
+            {
+                if (managedBookSummary != null) managedBookSummary.Text = "当前没有可用词书。可以在下方导入第一个 CSV。";
+                return;
+            }
+            List<string> units = loader.GetUnitsForBook(book);
+            int words = loader.LoadWordList(book, units).Count;
+            managedBookSummary.Text = book + " · " + units.Count + " 个单元 · " + words + " 个词条";
+        }
+
+        private void ChooseImportCsv()
+        {
+            using (OpenFileDialog dialog = new OpenFileDialog())
+            {
+                dialog.Title = "选择要导入的词书 CSV";
+                dialog.Filter = "CSV 文件 (*.csv)|*.csv|所有文件 (*.*)|*.*";
+                dialog.CheckFileExists = true;
+                if (dialog.ShowDialog(this) != DialogResult.OK) return;
+                try
+                {
+                    int count = loader.ValidateCsvFile(dialog.FileName);
+                    importPath.Text = dialog.FileName;
+                    importUnit.Text = Path.GetFileNameWithoutExtension(dialog.FileName);
+                    MessageBox.Show(this, "文件格式有效，共检测到 " + count + " 个词条。", "CSV 检查完成");
+                }
+                catch (Exception error) { MessageBox.Show(this, error.Message, "无法导入 CSV"); }
+            }
+        }
+
+        private void ImportCsv()
+        {
+            try
+            {
+                string book = DataLoader.ValidateDataName(importBook.Text, "词书名称");
+                string unit = DataLoader.ValidateDataName(importUnit.Text, "单元名称");
+                loader.ValidateCsvFile(importPath.Text);
+                string destination = Path.Combine(loader.DataDirectory, book, unit + ".csv");
+                bool overwrite = File.Exists(destination);
+                if (overwrite && MessageBox.Show(this, "目标单元已经存在，是否覆盖？\n" + book + " / " + unit,
+                    "确认覆盖", MessageBoxButtons.YesNo, MessageBoxIcon.Warning) != DialogResult.Yes) return;
+                backups.Create(true, store.Settings.autoBackupKeep);
+                int count = loader.ValidateCsvFile(importPath.Text);
+                loader.ImportCsv(importPath.Text, book, unit, overwrite);
+                RefreshManagedBooks(book);
+                MessageBox.Show(this, "导入完成，共 " + count + " 个词条。重新打开设置后，每日配额中会显示新词书。", "导入完成");
+            }
+            catch (Exception error) { MessageBox.Show(this, error.Message, "导入失败"); }
+        }
+
+        private void RenameSelectedBook()
+        {
+            string oldName = managedBook.SelectedItem as string;
+            if (string.IsNullOrWhiteSpace(oldName)) return;
+            string newName;
+            try { newName = DataLoader.ValidateDataName(renamedBook.Text, "新词书名称"); }
+            catch (Exception error) { MessageBox.Show(this, error.Message, "名称无效"); return; }
+            if (string.Equals(oldName, newName, StringComparison.OrdinalIgnoreCase)) return;
+            if (MessageBox.Show(this, "确定将词书“" + oldName + "”重命名为“" + newName + "”吗？",
+                "重命名词书", MessageBoxButtons.YesNo, MessageBoxIcon.Question) != DialogResult.Yes) return;
+            try
+            {
+                backups.Create(true, store.Settings.autoBackupKeep);
+                loader.RenameBook(oldName, newName);
+                try { store.RenameBookReferences(oldName, newName); }
+                catch
+                {
+                    loader.RenameBook(newName, oldName);
+                    throw;
+                }
+                RefreshManagedBooks(newName);
+                MessageBox.Show(this, "词书已重命名。", "完成");
+            }
+            catch (Exception error) { MessageBox.Show(this, error.Message, "重命名失败"); }
         }
 
         private TextBox Shortcut(int key, bool allowPlain)

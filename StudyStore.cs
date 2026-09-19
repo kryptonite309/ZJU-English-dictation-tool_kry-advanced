@@ -118,6 +118,13 @@ namespace EnglishDictationTool
         public string listId { get; set; }
     }
 
+    internal sealed class StudyEndResult
+    {
+        public string kind { get; set; }
+        public int kept { get; set; }
+        public int released { get; set; }
+    }
+
     internal sealed class StudyState
     {
         public int version { get; set; }
@@ -182,7 +189,11 @@ namespace EnglishDictationTool
             catch { state.settings = previous; throw; }
         }
         public IList<StudyList> Lists { get { return state.lists.AsReadOnly(); } }
-        public StudyList Active { get { return state.lists.FirstOrDefault(x => x.id == state.activeListId); } }
+        public StudyList Active { get { return state.lists.FirstOrDefault(x => x.id == state.activeListId
+            && x.status == "active"); } }
+        public StudyList ActiveFor(string kind) { return state.lists.FirstOrDefault(x => x.kind == kind
+            && x.status == "active"); }
+        public bool HasAnyActive { get { return state.lists.Any(x => x.status == "active"); } }
         public int UndoCount { get { return state.undo.Count; } }
         public static DateTime StudyDay(DateTime when)
         {
@@ -241,6 +252,23 @@ namespace EnglishDictationTool
                 }
             }
             return result;
+        }
+
+        public void RenameBookReferences(string oldName, string newName)
+        {
+            foreach (StudyWord word in state.words.Where(x => string.Equals(x.book, oldName,
+                StringComparison.OrdinalIgnoreCase))) word.book = newName;
+            if (state.settings.defaultBookCounts != null)
+            {
+                KeyValuePair<string, int> prior = state.settings.defaultBookCounts.FirstOrDefault(x =>
+                    string.Equals(x.Key, oldName, StringComparison.OrdinalIgnoreCase));
+                if (!string.IsNullOrEmpty(prior.Key))
+                {
+                    state.settings.defaultBookCounts.Remove(prior.Key);
+                    state.settings.defaultBookCounts[newName] = prior.Value;
+                }
+            }
+            Save();
         }
 
         public Dictionary<string, int> AvailableCounts()
@@ -326,7 +354,7 @@ namespace EnglishDictationTool
         public StudyList ExtractNew(Dictionary<string, int> quotas, DateTime now)
         {
             SettleCrossDay(now);
-            if (Active != null && Active.status == "active")
+            if (ActiveFor("new") != null)
                 throw new InvalidOperationException("存在未完成列表，请先继续完成。");
             if (quotas == null || quotas.Count == 0 || quotas.Any(x => x.Value < 0))
                 throw new ArgumentException("请选择至少一本词书及抽取数量。", "quotas");
@@ -365,20 +393,23 @@ namespace EnglishDictationTool
         public StudyList StartListReview(DateTime now)
         {
             SettleCrossDay(now);
-            RequireNoActive();
+            RequireNoActive("list_review");
             string date = StudyDayKey(now);
-            HashSet<string> already = new HashSet<string>(state.lists.Where(x => x.kind == "list_review"
-                && x.studyDate == date).SelectMany(x => x.sourceListIds ?? new List<string>()));
+            List<WordEntry> already = state.lists.Where(x => x.kind == "list_review"
+                && x.studyDate == date).SelectMany(x => x.items.Where(y => !y.released)
+                    .Select(y => y.word)).ToList();
             List<StudyList> sources = state.lists.Where(x => x.kind == "new"
                 && string.CompareOrdinal(x.studyDate, date) < 0
-                && x.status != "active" && !already.Contains(x.id)
+                && x.status != "active"
                 && x.items.Any(y => !y.released && !y.mastered
-                    && notebooks.GetNotebook(y.word) != Notebooks.Mastered))
+                    && notebooks.GetNotebook(y.word) != Notebooks.Mastered
+                    && !already.Any(done => done.Equals(y.word))))
                 .OrderByDescending(x => x.createdAt).Take(state.settings.listCount)
                 .OrderBy(x => x.createdAt).ToList();
             if (sources.Count == 0) throw new InvalidOperationException("没有新的历史提取列表可复习。");
             List<WordEntry> words = sources.SelectMany(x => x.items.Where(y => !y.released && !y.mastered)
-                .Select(y => y.word)).Where(x => notebooks.GetNotebook(x) != Notebooks.Mastered).ToList();
+                .Select(y => y.word)).Where(x => notebooks.GetNotebook(x) != Notebooks.Mastered
+                    && !already.Any(done => done.Equals(x))).ToList();
             StudyList list = NewList("list_review", now, words);
             list.sourceListIds = sources.Select(x => x.id).ToList();
             PrepareTasks(list);
@@ -390,7 +421,7 @@ namespace EnglishDictationTool
         public StudyList StartProblemReview(DateTime now)
         {
             SettleCrossDay(now);
-            RequireNoActive();
+            RequireNoActive("problem_review");
             string date = StudyDayKey(now);
             List<WordEntry> already = state.lists.Where(x => x.kind == "problem_review" && x.studyDate == date)
                 .SelectMany(x => x.items.Select(y => y.word)).ToList();
@@ -437,10 +468,25 @@ namespace EnglishDictationTool
             return list;
         }
 
-        private void RequireNoActive()
+        private void RequireNoActive(string kind)
         {
-            if (Active != null && Active.status == "active")
+            if (ActiveFor(kind) != null)
                 throw new InvalidOperationException("存在未完成列表，请先继续完成。");
+        }
+
+        public StudyList Resume(string kind)
+        {
+            SettleCrossDay(DateTime.Now);
+            StudyList list = ActiveFor(kind);
+            if (list == null) return null;
+            state.activeListId = list.id;
+            // Undo snapshots contain the whole study state. Keep them scoped to the
+            // selected module so switching between independent sessions cannot roll
+            // another module back accidentally.
+            state.undo.RemoveAll(x => x.listId != list.id);
+            if (list.phase == "quiz") RebuildPendingTasks(list);
+            Save();
+            return Active;
         }
 
         public StudyItem CurrentPreview()
@@ -470,6 +516,11 @@ namespace EnglishDictationTool
         private void PrepareTasks(StudyList list)
         {
             list.phase = "quiz";
+            RebuildPendingTasks(list);
+        }
+
+        private void RebuildPendingTasks(StudyList list)
+        {
             list.tasks.Clear();
             list.retries.Clear();
             list.taskCursor = 0;
@@ -480,12 +531,81 @@ namespace EnglishDictationTool
             foreach (StudyItem item in list.items)
             {
                 if (item.mastered || item.released || notebooks.GetNotebook(item.word) == Notebooks.Mastered) continue;
-                if (example) list.tasks.Add(new StudyTask { word = item.word, mode = "example" });
-                else item.exampleComplete = true;
-                if (spelling) list.tasks.Add(new StudyTask { word = item.word, mode = "spelling" });
-                else item.spellingComplete = true;
+                List<StudyTask> itemHistory = (list.history ?? new List<StudyTask>())
+                    .Where(x => x.word.Equals(item.word)).ToList();
+                bool exampleDone = itemHistory.Any(x => x.mode == "example"
+                    && (x.correct || x.skipped || x.mastered));
+                bool spellingDone = itemHistory.Any(x => x.mode == "spelling"
+                    && (x.correct || x.mastered));
+                item.exampleComplete = !example || exampleDone;
+                item.spellingComplete = !spelling || spellingDone;
+                if (example && !exampleDone)
+                {
+                    List<StudyTask> attempts = itemHistory.Where(x => x.mode == "example").ToList();
+                    list.tasks.Add(new StudyTask { word = item.word, mode = "example",
+                        replay = attempts.Any(x => !x.correct && !x.skipped), attempt = attempts.Count });
+                }
+                if (spelling && !spellingDone)
+                {
+                    List<StudyTask> attempts = itemHistory.Where(x => x.mode == "spelling").ToList();
+                    list.tasks.Add(new StudyTask { word = item.word, mode = "spelling",
+                        replay = attempts.Any(x => !x.correct), attempt = attempts.Count });
+                }
             }
             if (list.tasks.Count == 0) Finish(list);
+        }
+
+        public StudyEndResult EndActive(string kind, DateTime now)
+        {
+            SettleCrossDay(now);
+            StudyList list = ActiveFor(kind);
+            if (list == null) throw new InvalidOperationException("当前部分没有未完成列表。");
+            bool example = list.kind == "new" ? state.settings.newExample :
+                list.kind == "list_review" ? state.settings.listExample : state.settings.problemExample;
+            bool spelling = list.kind == "new" ? state.settings.newSpelling :
+                list.kind == "list_review" ? state.settings.listSpelling : state.settings.problemSpelling;
+            List<StudyItem> kept = new List<StudyItem>();
+            List<StudyItem> released = new List<StudyItem>();
+            for (int index = 0; index < list.items.Count; index++)
+            {
+                StudyItem item = list.items[index];
+                bool mastered = item.mastered || notebooks.GetNotebook(item.word) == Notebooks.Mastered;
+                bool previewed = list.kind != "new" || list.phase != "preview" || index < list.previewCursor;
+                List<StudyTask> history = (list.history ?? new List<StudyTask>())
+                    .Where(x => x.word.Equals(item.word)).ToList();
+                bool exampleDone = !example || history.Any(x => x.mode == "example"
+                    && (x.correct || x.skipped || x.mastered));
+                bool spellingDone = !spelling || history.Any(x => x.mode == "spelling"
+                    && (x.correct || x.mastered));
+                if (mastered || (previewed && exampleDone && spellingDone)) kept.Add(item);
+                else released.Add(item);
+            }
+            if (list.kind == "new")
+            {
+                List<WordEntry> priority = new List<WordEntry>();
+                foreach (StudyItem item in released)
+                {
+                    StudyWord word = FindWord(item.word);
+                    if (word == null) word = EnsureWord(new StudyWord { word = item.word });
+                    word.firstExtractedAt = DateTime.MinValue;
+                    word.priorityAt = now;
+                    if (!priority.Any(x => x.Equals(item.word))) priority.Add(item.word);
+                }
+                state.priorityWords.RemoveAll(x => priority.Any(y => y.Equals(x)));
+                state.priorityWords.InsertRange(0, priority);
+            }
+            list.items = kept;
+            list.history = (list.history ?? new List<StudyTask>()).Where(x =>
+                !released.Any(item => item.word.Equals(x.word))).ToList();
+            list.tasks.Clear();
+            list.retries.Clear();
+            list.taskCursor = 0;
+            list.status = "ended";
+            list.phase = "done";
+            if (state.activeListId == list.id) state.activeListId = null;
+            state.undo.RemoveAll(x => x.listId == list.id);
+            Save();
+            return new StudyEndResult { kind = kind, kept = kept.Count, released = released.Count };
         }
 
         public StudyTask CurrentTask()

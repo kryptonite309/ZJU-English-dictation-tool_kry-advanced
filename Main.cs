@@ -217,6 +217,8 @@ namespace EnglishDictationTool
         private readonly string dataDirectory;
         private readonly NaturalStringComparer comparer = new NaturalStringComparer();
 
+        public string DataDirectory { get { return dataDirectory; } }
+
         public DataLoader(string directory)
         {
             dataDirectory = directory;
@@ -260,7 +262,7 @@ namespace EnglishDictationTool
                 string file = Path.Combine(dataDirectory, book, unit + ".csv");
                 if (!File.Exists(file)) continue;
 
-                string csv = File.ReadAllText(file, new UTF8Encoding(true));
+                string csv = ReadCsvText(file);
                 List<List<string>> rows = ParseCsv(csv);
                 if (rows.Count == 0) continue;
 
@@ -295,6 +297,77 @@ namespace EnglishDictationTool
                 }
             }
             return result;
+        }
+
+        public int ValidateCsvFile(string file)
+        {
+            if (string.IsNullOrWhiteSpace(file) || !File.Exists(file))
+                throw new FileNotFoundException("找不到所选 CSV 文件。", file);
+            if (!string.Equals(Path.GetExtension(file), ".csv", StringComparison.OrdinalIgnoreCase))
+                throw new InvalidDataException("只支持导入 .csv 文件。");
+            List<List<string>> rows = ParseCsv(ReadCsvText(file));
+            if (rows.Count == 0) throw new InvalidDataException("CSV 文件为空。");
+            Dictionary<string, int> headers = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+            for (int i = 0; i < rows[0].Count; i++) headers[Sanitize(rows[0][i])] = i;
+            int englishIndex;
+            int chineseIndex;
+            if (!headers.TryGetValue("english", out englishIndex)
+                || !headers.TryGetValue("chinese", out chineseIndex))
+                throw new InvalidDataException("CSV 必须包含 english 和 chinese 两列，可另加 examples 列。");
+            int count = rows.Skip(1).Count(row => !string.IsNullOrWhiteSpace(GetCell(row, englishIndex)));
+            if (count == 0) throw new InvalidDataException("CSV 中没有可导入的英文词条。");
+            return count;
+        }
+
+        public string ImportCsv(string sourceFile, string book, string unit, bool overwrite)
+        {
+            ValidateCsvFile(sourceFile);
+            book = ValidateDataName(book, "词书名称");
+            unit = ValidateDataName(unit, "单元名称");
+            string bookPath = Path.Combine(dataDirectory, book);
+            string destination = Path.Combine(bookPath, unit + ".csv");
+            if (File.Exists(destination) && !overwrite)
+                throw new IOException("目标单元已经存在：" + book + " / " + unit);
+            Directory.CreateDirectory(bookPath);
+            File.WriteAllText(destination, ReadCsvText(sourceFile), new UTF8Encoding(true));
+            return destination;
+        }
+
+        public void RenameBook(string oldName, string newName)
+        {
+            oldName = ValidateDataName(oldName, "原词书名称");
+            newName = ValidateDataName(newName, "新词书名称");
+            if (string.Equals(oldName, newName, StringComparison.OrdinalIgnoreCase)) return;
+            string source = Path.Combine(dataDirectory, oldName);
+            string destination = Path.Combine(dataDirectory, newName);
+            if (!Directory.Exists(source)) throw new DirectoryNotFoundException("找不到词书：" + oldName);
+            if (Directory.Exists(destination)) throw new IOException("已存在同名词书：" + newName);
+            Directory.Move(source, destination);
+        }
+
+        public static string ValidateDataName(string value, string label)
+        {
+            string name = (value ?? string.Empty).Trim();
+            if (name.Length == 0) throw new ArgumentException(label + "不能为空。");
+            if (name == "." || name == ".." || name.Length > 80
+                || name.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0
+                || name.Contains(Path.DirectorySeparatorChar.ToString())
+                || name.Contains(Path.AltDirectorySeparatorChar.ToString()))
+                throw new ArgumentException(label + "包含无效字符或长度超过 80。");
+            return name;
+        }
+
+        private static string ReadCsvText(string file)
+        {
+            byte[] bytes = File.ReadAllBytes(file);
+            try
+            {
+                return new UTF8Encoding(false, true).GetString(bytes).TrimStart('\uFEFF');
+            }
+            catch (DecoderFallbackException)
+            {
+                return Encoding.Default.GetString(bytes).TrimStart('\uFEFF');
+            }
         }
 
         private static string GetCell(List<string> row, int index)
@@ -636,6 +709,9 @@ namespace EnglishDictationTool
         private Button dailyNewButton;
         private Button dailyListButton;
         private Button dailyProblemButton;
+        private Button dailyNewEndButton;
+        private Button dailyListEndButton;
+        private Button dailyProblemEndButton;
         private Label dailyProgress;
         private CheckBox reviewFirstLetter;
         private NumericUpDown reviewCorrectTarget;
@@ -655,7 +731,7 @@ namespace EnglishDictationTool
             appearance = new AppearanceStore(projectRoot);
             keybindings = LoadKeybindings();
 
-            Text = "大英默写器 · 每日学习";
+            Text = "大英默写器 · KRY 增强版 v1.1.0";
             StartPosition = FormStartPosition.CenterScreen;
             ClientSize = ModernUI.FitWindow(1500, 900);
             MinimumSize = new Size(960, 650);
@@ -814,13 +890,22 @@ namespace EnglishDictationTool
             dailyNewButton = MakeButton("新学");
             dailyNewButton.Click += delegate { StartDailyNew(); };
             ((ModernButton)dailyNewButton).Primary = true;
-            PlaceCardButton(newCard, dailyNewButton);
+            dailyNewEndButton = MakeButton("结束列表");
+            ((ModernButton)dailyNewEndButton).Subtle = true;
+            dailyNewEndButton.Click += delegate { EndDaily("new"); };
+            PlaceCardButtons(newCard, dailyNewButton, dailyNewEndButton);
             dailyListButton = MakeButton("历史列表复习");
             dailyListButton.Click += delegate { StartDailyList(); };
-            PlaceCardButton(listCard, dailyListButton);
+            dailyListEndButton = MakeButton("结束列表");
+            ((ModernButton)dailyListEndButton).Subtle = true;
+            dailyListEndButton.Click += delegate { EndDaily("list_review"); };
+            PlaceCardButtons(listCard, dailyListButton, dailyListEndButton);
             dailyProblemButton = MakeButton("错题与易错词复习");
             dailyProblemButton.Click += delegate { StartDailyProblems(); };
-            PlaceCardButton(problemCard, dailyProblemButton);
+            dailyProblemEndButton = MakeButton("结束列表");
+            ((ModernButton)dailyProblemEndButton).Subtle = true;
+            dailyProblemEndButton.Click += delegate { EndDaily("problem_review"); };
+            PlaceCardButtons(problemCard, dailyProblemButton, dailyProblemEndButton);
             dailyProgress = MakeLabel("");
             dailyProgress.Width = 365;
             dailyProgress.Height = 60;
@@ -1008,11 +1093,18 @@ namespace EnglishDictationTool
         private void UpdateDailyButtons()
         {
             if (dailyNewButton == null) return;
-            StudyList active = study.Active;
-            dailyNewButton.Text = active == null ? "开始新学 · " + study.Settings.newCount + " 词"
-                : "继续当前列表";
-            dailyListButton.Text = "开始复习 · " + study.Settings.listCount + " 列表";
-            dailyProblemButton.Text = "开始复习 · " + study.Settings.problemCount + " 词";
+            StudyList newActive = study.ActiveFor("new");
+            StudyList listActive = study.ActiveFor("list_review");
+            StudyList problemActive = study.ActiveFor("problem_review");
+            dailyNewButton.Text = newActive == null ? "开始新学 · " + study.Settings.newCount + " 词"
+                : "继续新学";
+            dailyListButton.Text = listActive == null ? "开始复习 · " + study.Settings.listCount + " 列表"
+                : "继续列表复习";
+            dailyProblemButton.Text = problemActive == null ? "开始复习 · " + study.Settings.problemCount + " 词"
+                : "继续错词复习";
+            dailyNewEndButton.Visible = newActive != null;
+            dailyListEndButton.Visible = listActive != null;
+            dailyProblemEndButton.Visible = problemActive != null;
             dailyListButton.Enabled = true;
             dailyProblemButton.Enabled = true;
             string today = StudyStore.StudyDayKey(DateTime.Now);
@@ -1034,12 +1126,14 @@ namespace EnglishDictationTool
                 finally { form.DetachFreeSettings(); }
             }
             ApplyAppearance();
+            PopulateBooks();
             UpdateDailyButtons();
             nextAutoBackup = DateTime.Now.AddMinutes(study.Settings.autoBackupMinutes);
         }
 
-        private void OpenStudySession()
+        private void OpenStudySession(string kind)
         {
+            if (study.Resume(kind) == null) { UpdateDailyButtons(); return; }
             using (StudySessionForm form = new StudySessionForm(study, notebooks, ManualBackup, appearance))
                 form.ShowDialog(this);
             UpdateDailyButtons();
@@ -1051,37 +1145,50 @@ namespace EnglishDictationTool
             try
             {
                 study.SettleCrossDay(DateTime.Now);
-                if (study.Active != null) { OpenStudySession(); return; }
+                if (study.ActiveFor("new") != null) { OpenStudySession("new"); return; }
                 using (QuotaForm form = new QuotaForm(study, loader))
                 {
                     if (form.ShowDialog(this) != DialogResult.OK) return;
                     study.ExtractNew(form.Quotas, DateTime.Now);
                 }
-                OpenStudySession();
+                OpenStudySession("new");
             }
             catch (Exception error) { ShowDarkDialog("新学无法开始", error.Message, false); }
         }
 
         private void StartDailyList()
         {
-            if (study.Active != null)
-            {
-                ShowDarkDialog("提示", "请先完成正在学习的列表；点“继续”可接着学习。", false);
-                return;
-            }
-            try { study.StartListReview(DateTime.Now); OpenStudySession(); }
+            if (study.ActiveFor("list_review") != null) { OpenStudySession("list_review"); return; }
+            try { study.StartListReview(DateTime.Now); OpenStudySession("list_review"); }
             catch (Exception error) { ShowDarkDialog("列表复习无法开始", error.Message, false); }
         }
 
         private void StartDailyProblems()
         {
-            if (study.Active != null)
-            {
-                ShowDarkDialog("提示", "请先完成正在学习的列表；点“继续”可接着学习。", false);
-                return;
-            }
-            try { study.StartProblemReview(DateTime.Now); OpenStudySession(); }
+            if (study.ActiveFor("problem_review") != null) { OpenStudySession("problem_review"); return; }
+            try { study.StartProblemReview(DateTime.Now); OpenStudySession("problem_review"); }
             catch (Exception error) { ShowDarkDialog("错题复习无法开始", error.Message, false); }
+        }
+
+        private void EndDaily(string kind)
+        {
+            StudyList active = study.ActiveFor(kind);
+            if (active == null) return;
+            string title = kind == "new" ? "新学" : kind == "list_review" ? "历史列表复习" : "错题复习";
+            string message = "确定手动结束“" + title + "”当前列表吗？\n\n"
+                + "已经完成本部分全部要求的单词会保留；其余单词会退出当前列表。"
+                + (kind == "new" ? "未完成词会回到新词池顶端，供下次优先抽取。" : "未完成词以后仍可再次复习。")
+                + "\n\n执行前会自动创建一份手动备份。";
+            if (MessageBox.Show(this, message, "结束当前列表", MessageBoxButtons.YesNo,
+                MessageBoxIcon.Warning) != DialogResult.Yes) return;
+            if (!ManualBackup()) return;
+            try
+            {
+                StudyEndResult result = study.EndActive(kind, DateTime.Now);
+                ShowDarkDialog("列表已结束", "保留 " + result.kept + " 个，释放 " + result.released + " 个。", false);
+                UpdateDailyButtons();
+            }
+            catch (Exception error) { ShowDarkDialog("无法结束列表", error.Message, false); }
         }
 
         private bool ManualBackup()
@@ -1300,17 +1407,32 @@ namespace EnglishDictationTool
             return button;
         }
 
-        private static void PlaceCardButton(ModernCard card, Button button)
+        private static void PlaceCardButtons(ModernCard card, Button primary, Button end)
         {
-            button.Height = 42;
-            button.Margin = Padding.Empty;
-            card.Controls.Add(button);
+            primary.Height = 42;
+            end.Height = 42;
+            primary.Margin = Padding.Empty;
+            end.Margin = Padding.Empty;
+            card.Controls.Add(primary);
+            card.Controls.Add(end);
             EventHandler position = delegate
             {
-                button.Width = Math.Max(100, card.ClientSize.Width - 42);
-                button.Location = new Point(21, Math.Max(142, card.ClientSize.Height - 65));
+                int available = Math.Max(180, card.ClientSize.Width - 42);
+                int y = Math.Max(142, card.ClientSize.Height - 65);
+                if (!end.Visible)
+                {
+                    primary.Width = available;
+                    primary.Location = new Point(21, y);
+                    return;
+                }
+                int endWidth = Math.Min(118, Math.Max(94, available / 3));
+                primary.Width = Math.Max(100, available - endWidth - 8);
+                end.Width = endWidth;
+                primary.Location = new Point(21, y);
+                end.Location = new Point(21 + primary.Width + 8, y);
             };
             card.Resize += position;
+            end.VisibleChanged += position;
             position(card, EventArgs.Empty);
         }
 
@@ -1367,9 +1489,9 @@ namespace EnglishDictationTool
 
         private void StartGame()
         {
-            if (study.Active != null)
+            if (study.HasAnyActive)
             {
-                ShowDarkDialog("提示", "请先完成当前每日学习列表；新学入口可继续。", false);
+                ShowDarkDialog("提示", "每日学习中仍有未完成列表；请在对应入口继续或手动结束。", false);
                 return;
             }
             List<string> selectedUnits = unitList.CheckedItems.Cast<object>()
@@ -1397,9 +1519,9 @@ namespace EnglishDictationTool
 
         private void StartReview()
         {
-            if (study.Active != null)
+            if (study.HasAnyActive)
             {
-                ShowDarkDialog("提示", "请先完成当前每日学习列表；新学入口可继续。", false);
+                ShowDarkDialog("提示", "每日学习中仍有未完成列表；请在对应入口继续或手动结束。", false);
                 return;
             }
             if (!engine.StartReviewMode())
@@ -1647,13 +1769,16 @@ namespace EnglishDictationTool
                 + "功能\n"
                 + "• 支持个性化词书与单词、短语筛选\n"
                 + "• 支持顺序、随机、中文提示和例句填空\n"
-                + "• 自动记录错词并提供错题复习\n\n"
+                + "• 自动记录错词并提供错题复习\n"
+                + "• 新学、历史列表复习、错题复习相互独立，可分别继续或结束\n\n"
                 + "默认指令\n"
                 + "• /skip 或 a：跳过且不计入错题\n"
                 + "• /review：开始错题复习\n"
                 + "• /clc：清空错题本\n"
                 + "• /clear：清空日志\n\n"
-                + "顶部“设置”可调整每日计划、词本、快捷键、外观和日历。\n"
+                + "未完成列表旁可选择“继续”或“结束列表”。手动结束时，已完成内容保留，未完成词会回到原来的候选范围。\n"
+                + "重新进入未完成列表时，会立即采用当前的题型设置。\n"
+                + "顶部“设置”可调整每日计划、词本、快捷键、外观和日历；“词书管理”可以导入外部 CSV 或重命名词书。\n"
                 + "学习窗口的“上一页”只用于回看；展示和答题阶段不能互相回退。\n"
                 + "默认采用深色背景，字体、提示文案和练习背景可在外观设置中修改。";
             ShowDarkDialog("帮助", help, true);
