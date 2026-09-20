@@ -111,7 +111,17 @@ namespace EnglishDictationTool
         private bool speechWarningShown;
         private int previewReviewIndex = -1;
         private int quizReviewIndex = -1;
+        private StudyTask stagedExampleTask;
+        private int exampleRevealStage;
         internal string VisibleText { get { return display.ContentText; } }
+        internal void RevealExampleForPreview()
+        {
+            if (!IsExampleQuizActive()) return;
+            bool firstLetter = store.Settings.exampleFirstLetterHints;
+            if (ExampleRevealFlow.ReadyToSubmit(exampleRevealStage, firstLetter)) return;
+            exampleRevealStage = ExampleRevealFlow.NextStage(exampleRevealStage, firstLetter);
+            ShowStep();
+        }
 
         public StudySessionForm(StudyStore study, NotebookStore notebookStore,
             Func<bool> backupAction, AppearanceStore appearanceStore)
@@ -168,13 +178,23 @@ namespace EnglishDictationTool
                 if (e.KeyCode != Keys.Enter) return;
                 e.SuppressKeyPress = true;
                 if (store.Active != null && store.Active.phase == "preview") Advance();
+                else if (IsExampleQuizActive())
+                {
+                    if (ExampleRevealFlow.HasTypedAnswer(answer.Text))
+                    {
+                        exampleRevealStage = ExampleRevealFlow.LastRevealStage(
+                            store.Settings.exampleFirstLetterHints);
+                        Submit();
+                    }
+                    return;
+                }
                 else Submit();
             };
             layout.Controls.Add(answer, 0, 2);
             FlowLayoutPanel actions = new FlowLayoutPanel { Dock = DockStyle.Fill, WrapContents = false,
                 FlowDirection = FlowDirection.LeftToRight, Padding = new Padding(0, 7, 0, 0) };
             previous = ActionButton("上一页", delegate { Previous(); });
-            advance = ActionButton("下一步", delegate { Advance(); });
+            advance = ActionButton("下一步", delegate { AdvanceOrExample(); });
             master = ActionButton("斩当前词", delegate { Master(); });
             undo = ActionButton("撤销上词", delegate { Undo(); });
             backup = ActionButton("手动备份", delegate
@@ -231,6 +251,16 @@ namespace EnglishDictationTool
 
         protected override bool ProcessCmdKey(ref Message msg, Keys keyData)
         {
+            if (IsExampleQuizActive() && keyData == Keys.Enter
+                && ExampleRevealFlow.HasTypedAnswer(answer.Text))
+            {
+                exampleRevealStage = ExampleRevealFlow.LastRevealStage(
+                    store.Settings.exampleFirstLetterHints);
+                Submit();
+                return true;
+            }
+            if (IsExampleQuizActive() && keyData == (Keys)store.Settings.exampleHintKey)
+            { AdvanceExampleOrSubmit(); return true; }
             if (keyData == notebooks.MasteryShortcut) { Master(); return true; }
             if (keyData == (Keys)store.Settings.undoKey) { Undo(); return true; }
             if (keyData == (Keys)store.Settings.manualBackupKey)
@@ -253,6 +283,7 @@ namespace EnglishDictationTool
             if (list == null)
             {
                 pronouncer.Stop(); replay.Enabled = false;
+                stagedExampleTask = null; exampleRevealStage = 0;
                 StudyList opened = store.Lists.FirstOrDefault(x => x.id == openedListId);
                 if (quizReviewIndex >= 0 && opened != null && opened.history != null
                     && quizReviewIndex < opened.history.Count)
@@ -276,6 +307,7 @@ namespace EnglishDictationTool
                 list.kind == "list_review" ? "历史列表复习" : "错题与易错词复习";
             if (list.phase == "preview")
             {
+                stagedExampleTask = null; exampleRevealStage = 0;
                 quizReviewIndex = -1;
                 if (previewReviewIndex >= 0 && previewReviewIndex < list.previewCursor)
                 {
@@ -287,7 +319,7 @@ namespace EnglishDictationTool
                     display.Add(GameEngine.CleanEnglish(earlier.word), "word");
                     display.Add("例句：\n" + (string.IsNullOrWhiteSpace(earlier.word.examples)
                         ? "该单词暂时没有例句" : Regex.Replace(earlier.word.examples, @"\[\[(.*?)\]\]", "$1")), "example");
-                    display.Add("释义：\n" + earlier.word.chinese, "meaning");
+                    display.Add("释义：\n" + PartOfSpeech.DisplayChinese(earlier.word), "meaning");
                     answer.Clear(); answer.Enabled = false;
                     previous.Enabled = previewReviewIndex > 0;
                     advance.Enabled = true; advance.Text = "后一词";
@@ -312,7 +344,8 @@ namespace EnglishDictationTool
                     display.Add("例句：\n" + (string.IsNullOrWhiteSpace(item.word.examples)
                         ? "该单词暂时没有例句" : Regex.Replace(item.word.examples, @"\[\[(.*?)\]\]", "$1")), "example");
                 }
-                if (list.previewStage >= 2) display.Add("释义：\n" + item.word.chinese, "meaning");
+                if (list.previewStage >= 2)
+                    display.Add("释义：\n" + PartOfSpeech.DisplayChinese(item.word), "meaning");
                 answer.Clear(); answer.Enabled = false;
                 previous.Enabled = list.previewCursor > 0;
                 advance.Enabled = true;
@@ -355,6 +388,22 @@ namespace EnglishDictationTool
                     + missingExamples + " 题）", Theme.Text);
                 return;
             }
+            bool newExampleQuestion = false;
+            string retainedAnswer = answer.Text;
+            if (task.mode == "example")
+            {
+                if (!object.ReferenceEquals(stagedExampleTask, task))
+                {
+                    stagedExampleTask = task;
+                    exampleRevealStage = 0;
+                    newExampleQuestion = true;
+                }
+            }
+            else
+            {
+                stagedExampleTask = null;
+                exampleRevealStage = 0;
+            }
             shown = task.word; shownMode = task.mode;
             heading.Text = kind + " · " + list.id + " · " +
                 Math.Min(list.taskCursor + 1, list.tasks.Count) + "/" + list.tasks.Count
@@ -362,23 +411,42 @@ namespace EnglishDictationTool
             display.ClearContent();
             if (task.mode == "example")
             {
-                string sentence = task.word.examples.Split('；').FirstOrDefault(x => x.Contains("[["));
-                if (sentence == null) sentence = task.word.examples;
-                display.Add("例句填空：\n\n" + Regex.Replace(sentence, @"\[\[(.*?)\]\]", "________"), "example");
+                bool firstLetter = store.Settings.exampleFirstLetterHints;
+                string prompt = RenderExamplePrompt(task,
+                    ExampleRevealFlow.ShowsFirstLetter(exampleRevealStage, firstLetter));
+                display.Add("例句填空：\n\n" + prompt, "example");
+                if (ExampleRevealFlow.ShowsMeaning(exampleRevealStage, firstLetter))
+                    display.Add("中文释义：\n" + GameEngine.ChineseHint(task.word), "meaning");
+                display.Add("按 " + new KeysConverter().ConvertToString((Keys)store.Settings.exampleHintKey)
+                    + (ExampleRevealFlow.ReadyToSubmit(exampleRevealStage, firstLetter)
+                        ? " 提交答案。" : ExampleRevealFlow.ShowsFirstLetter(
+                            ExampleRevealFlow.NextStage(exampleRevealStage, firstLetter), firstLetter)
+                            && !ExampleRevealFlow.ShowsMeaning(
+                                ExampleRevealFlow.NextStage(exampleRevealStage, firstLetter), firstLetter)
+                            ? " 显示首字母提示。" : " 显示中文释义。"), "normal");
             }
             else
             {
                 display.Add("请根据释义拼写英文：", "normal");
-                display.Add(task.word.chinese, "meaning");
+                display.Add(PartOfSpeech.DisplayChinese(task.word), "meaning");
                 if (list.kind == "problem_review" && notebooks.ReviewFirstLetter
                     && GameEngine.CleanEnglish(task.word).Length > 0)
                     Append("\n首字母提示：" + GameEngine.CleanEnglish(task.word).Substring(0, 1), Theme.Text);
             }
             if (missingExamples > 0)
                 Append("\n该单词暂时没有例句（已跳过 " + missingExamples + " 题）", Theme.Text);
-            answer.Enabled = true; answer.Clear(); answer.Focus();
+            answer.Enabled = true;
+            if (task.mode != "example" || newExampleQuestion) answer.Clear();
+            else
+            {
+                answer.Text = retainedAnswer;
+                answer.SelectionStart = answer.TextLength;
+            }
+            answer.Focus();
             previous.Enabled = list.history != null && list.history.Count > 0;
-            advance.Enabled = false; master.Enabled = true;
+            advance.Enabled = task.mode == "example";
+            advance.Text = task.mode == "example" ? NextExampleActionText() : "下一步";
+            master.Enabled = true;
             undo.Enabled = store.UndoCount > 0;
         }
 
@@ -428,6 +496,59 @@ namespace EnglishDictationTool
             ShowStep();
         }
 
+        private void AdvanceOrExample()
+        {
+            if (IsExampleQuizActive()) AdvanceExampleOrSubmit();
+            else Advance();
+        }
+
+        private bool IsExampleQuizActive()
+        {
+            return previewReviewIndex < 0 && quizReviewIndex < 0 && store.Active != null
+                && store.Active.phase == "quiz" && store.CurrentTask() != null
+                && store.CurrentTask().mode == "example";
+        }
+
+        private void AdvanceExampleOrSubmit()
+        {
+            if (!IsExampleQuizActive()) return;
+            bool firstLetter = store.Settings.exampleFirstLetterHints;
+            if (ExampleRevealFlow.ReadyToSubmit(exampleRevealStage, firstLetter))
+            {
+                Submit();
+                return;
+            }
+            exampleRevealStage = ExampleRevealFlow.NextStage(exampleRevealStage, firstLetter);
+            ShowStep();
+        }
+
+        private string NextExampleActionText()
+        {
+            bool firstLetter = store.Settings.exampleFirstLetterHints;
+            if (ExampleRevealFlow.ReadyToSubmit(exampleRevealStage, firstLetter)) return "提交答案";
+            int next = ExampleRevealFlow.NextStage(exampleRevealStage, firstLetter);
+            return ExampleRevealFlow.ShowsFirstLetter(next, firstLetter)
+                && !ExampleRevealFlow.ShowsMeaning(next, firstLetter)
+                ? "显示首字母" : "显示中文";
+        }
+
+        private static string RenderExamplePrompt(StudyTask task, bool showFirstLetter)
+        {
+            string prompt = task.examplePrompt;
+            string expected = task.exampleAnswer;
+            if (string.IsNullOrWhiteSpace(prompt) || string.IsNullOrWhiteSpace(expected))
+            {
+                ExampleQuestion fallback = ExampleCloze.First(task.word);
+                if (fallback != null)
+                {
+                    prompt = fallback.prompt;
+                    expected = fallback.answer;
+                }
+            }
+            return new ExampleQuestion { prompt = prompt ?? string.Empty,
+                answer = expected ?? string.Empty }.Render(showFirstLetter);
+        }
+
         private void Previous()
         {
             StudyList list = store.Active;
@@ -458,11 +579,19 @@ namespace EnglishDictationTool
             display.ClearContent();
             if (task.mode == "example")
             {
-                string sentence = (task.word.examples ?? string.Empty).Split('；')
-                    .FirstOrDefault(x => x.Contains("[[")) ?? task.word.examples ?? string.Empty;
-                display.Add("例句填空：\n" + Regex.Replace(sentence, @"\[\[(.*?)\]\]", "________"), "example");
+                string prompt = task.examplePrompt;
+                if (string.IsNullOrWhiteSpace(prompt))
+                {
+                    ExampleQuestion fallback = ExampleCloze.First(task.word);
+                    prompt = fallback == null ? string.Empty : fallback.prompt;
+                }
+                display.Add("例句填空：\n" + prompt, "example");
             }
-            else { display.Add("根据释义拼写英文：", "normal"); display.Add(task.word.chinese, "meaning"); }
+            else
+            {
+                display.Add("根据释义拼写英文：", "normal");
+                display.Add(PartOfSpeech.DisplayChinese(task.word), "meaning");
+            }
             if (task.mastered) Append("本题已斩。", Theme.Text);
             else if (task.skipped) Append("该单词暂时没有例句，已跳过。", Theme.Text);
             else
@@ -470,7 +599,7 @@ namespace EnglishDictationTool
                 Append("当时作答：" + (task.submittedAnswer ?? "（旧记录未保存作答文本）"), Theme.Text);
                 Append(task.correct ? "判定：正确" : "判定：错误", task.correct ? Theme.Correct : Theme.Error);
             }
-            display.Add("正确答案：" + GameEngine.CleanEnglish(task.word), "word");
+            display.Add("正确答案：" + store.ExpectedAnswer(task), "word");
             answer.Clear(); answer.Enabled = false;
             previous.Enabled = index > 0;
             advance.Enabled = true; advance.Text = "后一题";
@@ -481,6 +610,8 @@ namespace EnglishDictationTool
         {
             if (previewReviewIndex >= 0 || quizReviewIndex >= 0
                 || shown == null || shownMode == "preview") return;
+            if (IsExampleQuizActive() && !ExampleRevealFlow.ReadyToSubmit(exampleRevealStage,
+                store.Settings.exampleFirstLetterHints)) return;
             string entered = answer.Text;
             WordEntry answeredWord = shown;
             try
@@ -488,9 +619,11 @@ namespace EnglishDictationTool
                 AnswerOutcome result = store.Submit(entered, DateTime.Now);
                 ShowStep();
                 if (result.Correct)
-                    display.Add(appearance.Prompt("correct", answeredWord, entered), "correct");
+                    display.Add(appearance.Prompt("correct", answeredWord, entered,
+                        result.CorrectAnswer), "correct");
                 else
-                    display.Add(appearance.Prompt("error", answeredWord, entered), "error");
+                    display.Add(appearance.Prompt("error", answeredWord, entered,
+                        result.CorrectAnswer), "error");
                 if (result.MovedToErrorProne) Append("已达到门槛，移入易错本。", Theme.Text);
             }
             catch (Exception error)

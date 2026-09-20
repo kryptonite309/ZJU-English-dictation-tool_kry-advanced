@@ -22,9 +22,274 @@ namespace EnglishDictationTool
             File.WriteAllText(Path.Combine(book, "unit2.csv"),
                 "english,chinese,examples\ncharlie,查理,e.g. [[charlie]] is third.\ndive into / in,投入,e.g. They [[dive]] in.\n",
                 new UTF8Encoding(false));
+            File.WriteAllText(Path.Combine(root, "data", "parts_of_speech.csv"),
+                "english,part_of_speech\nalpha,n.\nbravo,v.\ncharlie,adj.\ndive into / in,v.\n",
+                new UTF8Encoding(false));
             NotebookStore notebooks = new NotebookStore(root);
             DataLoader loader = new DataLoader(Path.Combine(root, "data"));
             StudyStore store = new StudyStore(root, loader, notebooks);
+            WordEntry alphaWithPart = loader.LoadWordList("book1", new[] { "unit1" })[0];
+            WordEntry phraseWithoutPart = loader.LoadWordList("book1", new[] { "unit2" })[1];
+            Require(alphaWithPart.partOfSpeech == "n."
+                && PartOfSpeech.DisplayChinese(alphaWithPart).StartsWith("n. ")
+                && GameEngine.ChineseHint(alphaWithPart).StartsWith("n. "),
+                "单词从离线映射加载词性并显示在释义前");
+            Require(string.IsNullOrEmpty(phraseWithoutPart.partOfSpeech)
+                && PartOfSpeech.DisplayChinese(phraseWithoutPart) == "投入",
+                "词组即使映射中有值也不显示词性");
+            Require(PartOfSpeech.Normalize("noun / vt. / vi.") == "n./v."
+                && PartOfSpeech.SelectForDefinition("due", "(not before noun) expected 预期的",
+                    "n./adj.") == "adj."
+                && PartOfSpeech.SelectForDefinition("spill", "v.(cause to) flow 溢出",
+                    "n./v.") == "v."
+                && PartOfSpeech.DisplayChinese(new WordEntry { english = "cord",
+                    chinese = "1) an electrical wire 电线\n2) a piece of rope 细绳",
+                    partOfSpeech = "n." }).StartsWith("n. "),
+                "词性缩写归一且当前释义标记优先");
+
+            string duplicateRoot = Path.Combine(root, "duplicate_words_test");
+            string duplicateBook = Path.Combine(duplicateRoot, "data", "book1");
+            Directory.CreateDirectory(duplicateBook);
+            File.WriteAllText(Path.Combine(duplicateBook, "unit1.csv"),
+                "english,chinese,examples\nerase,释义一,e.g. [[erase]] it.；e.g. It was [[erased]].\nerase,释义二,e.g. [[erase]] it.；e.g. It was [[erased]].\nalpha,阿尔法,e.g. [[alpha]].\n",
+                new UTF8Encoding(false));
+            File.WriteAllText(Path.Combine(duplicateBook, "unit2.csv"),
+                "english,chinese,examples\nalpha,第二处释义,e.g. [[alpha]] again.\n",
+                new UTF8Encoding(false));
+            DataLoader duplicateLoader = new DataLoader(Path.Combine(duplicateRoot, "data"));
+            List<WordEntry> duplicateWords = duplicateLoader.LoadWordList("book1",
+                new[] { "unit1", "unit2" });
+            WordEntry mergedErase = duplicateWords.Single(x => x.english == "erase");
+            Require(duplicateWords.Count == 2 && mergedErase.chinese.Contains("释义一")
+                && mergedErase.chinese.Contains("释义二")
+                && mergedErase.examples.Split('；').Length == 2
+                && ExampleCloze.Questions(mergedErase).Count == 2,
+                "相同英文合并为一个词并保留全部释义与不重复例句");
+            NotebookStore duplicateNotebooks = new NotebookStore(duplicateRoot);
+            WordEntry eraseOne = new WordEntry { english = "erase", chinese = "释义一",
+                examples = "e.g. [[erase]] it." };
+            WordEntry eraseTwo = new WordEntry { english = "erase", chinese = "释义二",
+                examples = "e.g. It was [[erased]]." };
+            duplicateNotebooks.MoveToNotebook(eraseOne, Notebooks.Wrong);
+            duplicateNotebooks.MoveToNotebook(eraseTwo, Notebooks.Mastered);
+            Require(duplicateNotebooks.Records.Count(x => DataLoader.WordKey(x.word) == "erase") == 1
+                && duplicateNotebooks.GetNotebook(eraseOne) == Notebooks.Mastered,
+                "同一英文在单词本中共用归属且斩词全局生效");
+            GameEngine duplicateEngine = new GameEngine(duplicateLoader, duplicateNotebooks);
+            duplicateEngine.StartGame("book1", new List<string> { "unit1", "unit2" }, "all",
+                "sequential", "word", false, false);
+            Require(duplicateEngine.CurrentDeck.Count == 1
+                && duplicateEngine.CurrentDeck[0].english == "alpha",
+                "自由练习不重复出题且已斩同名词不再出现");
+
+            string multiExampleRoot = Path.Combine(root, "multiple_examples_test");
+            string multiExampleBook = Path.Combine(multiExampleRoot, "data", "book1");
+            Directory.CreateDirectory(multiExampleBook);
+            File.WriteAllText(Path.Combine(multiExampleBook, "unit1.csv"),
+                "english,chinese,examples\nerase,释义一,e.g. [[erase]] it.\nerase,释义二,e.g. It was [[erased]].\n",
+                new UTF8Encoding(false));
+            DataLoader multiExampleLoader = new DataLoader(Path.Combine(multiExampleRoot, "data"));
+            NotebookStore multiExampleNotebooks = new NotebookStore(multiExampleRoot);
+            StudyStore multiExampleStore = new StudyStore(multiExampleRoot,
+                multiExampleLoader, multiExampleNotebooks);
+            multiExampleStore.Settings.newExample = true;
+            multiExampleStore.Settings.newSpelling = false;
+            multiExampleStore.Settings.exampleCorrectTarget = 1;
+            multiExampleStore.Settings.spellingCorrectTarget = 0;
+            multiExampleStore.SaveSettings();
+            WordEntry multiErase = multiExampleLoader.LoadWordList("book1", new[] { "unit1" }).Single();
+            multiExampleNotebooks.MoveToNotebook(multiErase, Notebooks.Wrong);
+            DateTime multiExampleNow = DateTime.Now.AddHours(1);
+            StudyList multiExampleList = multiExampleStore.ExtractNew(
+                new Dictionary<string, int> { { "book1", 1 } }, multiExampleNow);
+            for (int step = 0; step < 3; step++) multiExampleStore.AdvancePreview();
+            Require(multiExampleList.items.Count == 1 && multiExampleList.tasks.Count == 2
+                && multiExampleList.tasks.Select(x => x.examplePrompt).Distinct().Count() == 2,
+                "同一单词的所有不同例句都生成独立题目");
+            Require(multiExampleStore.Submit("erase", multiExampleNow.AddMinutes(1)).Correct
+                && multiExampleNotebooks.GetRecord(multiErase).exampleCorrectCount == 0
+                && multiExampleList.history.Count(x => x.notebookCounted) == 0,
+                "尚有例句未完成时不提前计入答对次数");
+            multiExampleStore.Undo();
+            Require(multiExampleStore.CurrentTask().exampleAnswer == "erased",
+                "撤销上一条例句时保留当前例句");
+            Require(multiExampleStore.Submit("erased", multiExampleNow.AddMinutes(2)).Correct
+                && multiExampleNotebooks.GetRecord(multiErase).exampleCorrectCount == 0
+                && multiExampleStore.CurrentTask().exampleAnswer == "erase",
+                "撤销的具体例句会在当前题后精确重做");
+            Require(multiExampleStore.Submit("erase", multiExampleNow.AddMinutes(3)).Correct
+                && multiExampleNotebooks.GetRecord(multiErase).exampleCorrectCount == 1
+                && multiExampleStore.Lists.Single().history.Count(x => x.notebookCounted) == 1
+                && multiExampleStore.Active == null,
+                "全部例句完成后每词每列表只统计一次");
+            GameEngine multiExampleEngine = new GameEngine(multiExampleLoader,
+                new NotebookStore(multiExampleRoot));
+            multiExampleNotebooks.MoveToNotebook(multiErase, Notebooks.None);
+            multiExampleEngine = new GameEngine(multiExampleLoader, multiExampleNotebooks);
+            multiExampleEngine.StartGame("book1", new List<string> { "unit1" }, "all",
+                "sequential", "example", false, false);
+            Require(multiExampleEngine.CurrentDeck.Count == 2
+                && multiExampleEngine.GetExampleQuestion().answer == "erase",
+                "自由练习也会展开同词的所有例句");
+            multiExampleEngine.CheckAnswer("erase");
+            Require(multiExampleEngine.GetExampleQuestion().answer == "erased",
+                "自由练习中第二条例句不会被合并丢失");
+            string duplicateSecondBook = Path.Combine(duplicateRoot, "data", "book2");
+            Directory.CreateDirectory(duplicateSecondBook);
+            File.WriteAllText(Path.Combine(duplicateSecondBook, "unit1.csv"),
+                "english,chinese,examples\nalpha,另一词书的阿尔法,e.g. [[alpha]].\nbeta,贝塔,e.g. [[beta]].\n",
+                new UTF8Encoding(false));
+            StudyStore duplicateStore = new StudyStore(duplicateRoot, duplicateLoader, duplicateNotebooks);
+            StudyList duplicateQuotaList = duplicateStore.ExtractNew(new Dictionary<string, int>
+                { { "book1", 1 }, { "book2", 1 } }, DateTime.Now);
+            Require(duplicateQuotaList.items.Count == 2
+                && duplicateQuotaList.items.Select(x => DataLoader.WordKey(x.word)).Distinct().Count() == 2
+                && duplicateQuotaList.items.Any(x => x.word.english == "beta"),
+                "跨词书配额会跳过已选同名词并继续补足新词");
+
+            string duplicateMigrationRoot = Path.Combine(root, "duplicate_migration_test");
+            string duplicateMigrationBook = Path.Combine(duplicateMigrationRoot, "data", "book1");
+            Directory.CreateDirectory(duplicateMigrationBook);
+            File.WriteAllText(Path.Combine(duplicateMigrationBook, "unit1.csv"),
+                "english,chinese,examples\nerase,释义一,e.g. [[erase]] it.\nerase,释义二,e.g. It was [[erased]].\n",
+                new UTF8Encoding(false));
+            File.WriteAllText(Path.Combine(duplicateMigrationRoot, "data", "parts_of_speech.csv"),
+                "english,part_of_speech\nerase,v.\n", new UTF8Encoding(false));
+            NotebookStore duplicateMigrationNotebooks = new NotebookStore(duplicateMigrationRoot);
+            DateTime migrationNow = DateTime.Now;
+            StudySettings migrationSettings = StudySettings.Defaults();
+            migrationSettings.newExample = true;
+            migrationSettings.newSpelling = false;
+            StudyState legacyDuplicateState = new StudyState
+            {
+                version = 1,
+                settings = migrationSettings,
+                words = new List<StudyWord>
+                {
+                    new StudyWord { word = eraseOne, book = "book1", unit = "unit1",
+                        firstExtractedAt = migrationNow, acceptedAnswers = new List<string>() },
+                    new StudyWord { word = eraseTwo, book = "book1", unit = "unit1",
+                        firstExtractedAt = migrationNow, acceptedAnswers = new List<string>() }
+                },
+                lists = new List<StudyList>
+                {
+                    new StudyList
+                    {
+                        id = "duplicate_active", kind = "new", createdAt = migrationNow,
+                        studyDate = StudyStore.StudyDayKey(migrationNow), status = "active", phase = "quiz",
+                        sourceListIds = new List<string>(), previewCursor = 2,
+                        items = new List<StudyItem>
+                        {
+                            new StudyItem { word = eraseOne, exampleComplete = true,
+                                firstAnsweredAt = migrationNow },
+                            new StudyItem { word = eraseTwo, exampleComplete = false }
+                        },
+                        tasks = new List<StudyTask>
+                        {
+                            new StudyTask { word = eraseOne, mode = "example" },
+                            new StudyTask { word = eraseTwo, mode = "example" }
+                        },
+                        retries = new List<StudyTask>(),
+                        history = new List<StudyTask>
+                        {
+                            new StudyTask { word = eraseOne, mode = "example",
+                                examplePrompt = "e.g. ________ it.", exampleAnswer = "erase",
+                                exampleAnswers = new List<string> { "erase" }, correct = true,
+                                answeredAt = migrationNow }
+                        }
+                    }
+                },
+                priorityWords = new List<WordEntry>(), undo = new List<StudyUndo>(),
+                activeListId = "duplicate_active"
+            };
+            string legacyDuplicateJson = new JavaScriptSerializer { MaxJsonLength = int.MaxValue }
+                .Serialize(legacyDuplicateState).Replace(",\"notebookCounted\":false", string.Empty);
+            File.WriteAllText(Path.Combine(duplicateMigrationRoot, "study_state.json"),
+                legacyDuplicateJson, new UTF8Encoding(false));
+            StudyStore migratedDuplicates = new StudyStore(duplicateMigrationRoot,
+                new DataLoader(Path.Combine(duplicateMigrationRoot, "data")), duplicateMigrationNotebooks);
+            StudyList migratedDuplicateList = migratedDuplicates.Lists.Single();
+            Require(migratedDuplicateList.items.Count == 1
+                && migratedDuplicateList.items[0].word.chinese.Contains("释义一")
+                && migratedDuplicateList.items[0].word.chinese.Contains("释义二")
+                && !migratedDuplicateList.items[0].exampleComplete
+                && migratedDuplicateList.tasks.Count == 1
+                && migratedDuplicateList.tasks[0].exampleAnswer == "erased"
+                && migratedDuplicateList.history.Count(x => x.notebookCounted) == 1
+                && migratedDuplicateList.items[0].word.partOfSpeech == "v."
+                && PartOfSpeech.DisplayChinese(migratedDuplicateList.items[0].word).StartsWith("v. "),
+                "旧进度合并后保留已做例句并只补做未出现例句");
+
+            string archivedMigrationRoot = Path.Combine(root, "archived_pos_migration_test");
+            string archivedMigrationBook = Path.Combine(archivedMigrationRoot, "data", "book1");
+            Directory.CreateDirectory(archivedMigrationBook);
+            File.WriteAllText(Path.Combine(archivedMigrationBook, "unit1.csv"),
+                "english,chinese,examples\narchive,档案,e.g. an [[archive]].\n",
+                new UTF8Encoding(false));
+            File.WriteAllText(Path.Combine(archivedMigrationRoot, "data", "parts_of_speech.csv"),
+                "english,part_of_speech\narchive,n.\n", new UTF8Encoding(false));
+            WordEntry archivedWord = new WordEntry { english = "archive", chinese = "档案",
+                examples = "e.g. an [[archive]]." };
+            StudyState archivedState = new StudyState
+            {
+                version = 1, settings = StudySettings.Defaults(), words = new List<StudyWord>(),
+                lists = new List<StudyList>
+                {
+                    new StudyList
+                    {
+                        id = "archived", kind = "new", createdAt = migrationNow,
+                        studyDate = StudyStore.StudyDayKey(migrationNow), status = "settled",
+                        phase = "done", sourceListIds = new List<string>(), previewCursor = 1,
+                        items = new List<StudyItem> { new StudyItem { word = archivedWord,
+                            spellingComplete = true, firstAnsweredAt = migrationNow } },
+                        tasks = new List<StudyTask>(), retries = new List<StudyTask>(),
+                        history = new List<StudyTask> { new StudyTask { word = archivedWord,
+                            mode = "spelling", correct = true, answeredAt = migrationNow } }
+                    }
+                },
+                priorityWords = new List<WordEntry>(), undo = new List<StudyUndo>(),
+                activeListId = null
+            };
+            File.WriteAllText(Path.Combine(archivedMigrationRoot, "study_state.json"),
+                new JavaScriptSerializer { MaxJsonLength = int.MaxValue }.Serialize(archivedState),
+                new UTF8Encoding(false));
+            NotebookStore archivedNotebooks = new NotebookStore(archivedMigrationRoot);
+            NotebookState legacyNotebookSnapshot = new NotebookState
+            {
+                version = 1, reviewFirstLetter = true, reviewCorrectTarget = 3,
+                masteryShortcut = 1,
+                records = new List<NotebookRecord> { new NotebookRecord { word = archivedWord,
+                    notebook = Notebooks.Wrong, errorCount = 1 } },
+                recent = new List<WordEntry> { archivedWord }
+            };
+            archivedNotebooks.RestoreSnapshot(
+                new JavaScriptSerializer().Serialize(legacyNotebookSnapshot));
+            Require(archivedNotebooks.Records.Single().word.partOfSpeech == "n.",
+                "撤销恢复的旧单词本快照会重新补齐词性");
+            StudyStore migratedArchive = new StudyStore(archivedMigrationRoot,
+                new DataLoader(Path.Combine(archivedMigrationRoot, "data")),
+                archivedNotebooks);
+            StudyList archivedList = migratedArchive.Lists.Single();
+            Require(archivedList.items[0].word.partOfSpeech == "n."
+                && archivedList.history[0].word.partOfSpeech == "n.",
+                "已离开主单词池的历史列表词条也会补齐词性");
+            Require(store.Settings.exampleFirstLetterHints
+                && store.Settings.exampleHintKey == (int)System.Windows.Forms.Keys.Enter,
+                "所有例句首字母提示默认开启且提示键为 Enter");
+            Require(!ExampleRevealFlow.ShowsFirstLetter(0, true)
+                && !ExampleRevealFlow.ShowsMeaning(0, true)
+                && ExampleRevealFlow.ShowsFirstLetter(1, true)
+                && !ExampleRevealFlow.ShowsMeaning(1, true)
+                && ExampleRevealFlow.ShowsMeaning(2, true)
+                && ExampleRevealFlow.ReadyToSubmit(2, true),
+                "例句提示按无提示、首字母、中文、提交分阶段进行");
+            Require(!ExampleRevealFlow.ShowsFirstLetter(1, false)
+                && ExampleRevealFlow.ShowsMeaning(1, false)
+                && ExampleRevealFlow.ReadyToSubmit(1, false),
+                "关闭首字母后第一次提示键直接显示中文");
+            Require(ExampleRevealFlow.HasTypedAnswer("typed answer")
+                && !ExampleRevealFlow.HasTypedAnswer("   "),
+                "例句输入非空时 Enter 可直接提交，纯空白仍逐层提示");
             Require(StudyStore.StudyDayKey(new DateTime(2026, 9, 17, 4, 0, 59)) == "2026-09-16",
                 "4 点整归前一学习日");
             Require(StudyStore.StudyDayKey(new DateTime(2026, 9, 17, 4, 1, 0)) == "2026-09-17",
@@ -74,6 +339,80 @@ namespace EnglishDictationTool
                 "模糊作答展开并集");
             store.SetAcceptedAnswers(dive, new[] { "jump in" });
             Require(store.IsCorrect(dive, "jump  in"), "手动答案与多空格");
+
+            WordEntry unlearn = new WordEntry
+            {
+                english = "unlearn", chinese = "忘掉已学内容",
+                examples = "e.g. You must start by [[unlearning]] bad habits."
+            };
+            ExampleQuestion unlearnQuestion = ExampleCloze.First(unlearn);
+            Require(unlearnQuestion != null && unlearnQuestion.answer == "unlearning"
+                && unlearnQuestion.prompt.Contains("by ________ bad"),
+                "例句填空读取标记中的实际词形");
+            Require(store.IsCorrect(unlearn, "UNLEARNING", "example", unlearnQuestion.answers)
+                && !store.IsCorrect(unlearn, "unlearn", "example", unlearnQuestion.answers),
+                "例句题接受句中词形并拒绝不合语法的原形");
+            Require(store.IsCorrect(unlearn, "unlearn") && !store.IsCorrect(unlearn, "unlearning"),
+                "普通拼写仍判断词条原形");
+            WordEntry phraseCloze = new WordEntry
+            {
+                english = "come and go", chinese = "来来去去",
+                examples = "e.g. The pain [[comes]] and [[goes]]."
+            };
+            ExampleQuestion phraseQuestion = ExampleCloze.First(phraseCloze);
+            Require(phraseQuestion != null && phraseQuestion.answer == "comes and goes"
+                && phraseQuestion.prompt == "e.g. The pain ________.",
+                "分散标记的短语合并成一个自然填空");
+            WordEntry noisyCloze = new WordEntry
+            {
+                english = "resurface", chinese = "再次浮出水面",
+                examples = "e.g. When the [[divers]] did not [[resurface]], help arrived."
+            };
+            ExampleQuestion noisyQuestion = ExampleCloze.First(noisyCloze);
+            Require(noisyQuestion != null && noisyQuestion.answer == "resurface"
+                && noisyQuestion.prompt.Contains("the divers did not ________"),
+                "忽略例句中与当前词条无关的额外标记");
+
+            string clozeRoot = Path.Combine(root, "cloze_inflection_test");
+            string clozeBook = Path.Combine(clozeRoot, "data", "book1");
+            Directory.CreateDirectory(clozeBook);
+            File.WriteAllText(Path.Combine(clozeBook, "unit1.csv"),
+                "english,chinese,examples\nunlearn,忘掉已学内容,e.g. You must start by [[unlearning]] bad habits.\n",
+                new UTF8Encoding(false));
+            NotebookStore clozeNotebooks = new NotebookStore(clozeRoot);
+            StudyStore clozeStore = new StudyStore(clozeRoot,
+                new DataLoader(Path.Combine(clozeRoot, "data")), clozeNotebooks);
+            clozeStore.Settings.newExample = true;
+            clozeStore.Settings.newSpelling = false;
+            clozeStore.SaveSettings();
+            DateTime clozeDay = firstDay.AddHours(1);
+            clozeStore.ExtractNew(new Dictionary<string, int> { { "book1", 1 } }, clozeDay);
+            for (int step = 0; step < 3; step++) clozeStore.AdvancePreview();
+            Require(clozeStore.CurrentTask().exampleAnswer == "unlearning", "每日学习保存当前例句答案");
+            AnswerOutcome wrongForm = clozeStore.Submit("unlearn", clozeDay.AddMinutes(1));
+            Require(!wrongForm.Correct && wrongForm.CorrectAnswer == "unlearning",
+                "错误反馈显示例句实际答案");
+            AnswerOutcome correctedForm = clozeStore.Submit("unlearning", clozeDay.AddMinutes(2));
+            Require(correctedForm.Correct && clozeStore.Active == null,
+                "复现时按实际词形答对并完成列表");
+            AppearanceSettings legacyFeedbackSettings = AppearanceSettings.Defaults();
+            legacyFeedbackSettings.prompts["correct"] = "✓ 正确：{word}";
+            File.WriteAllText(Path.Combine(root, "appearance.json"),
+                new JavaScriptSerializer().Serialize(legacyFeedbackSettings),
+                new UTF8Encoding(false));
+            AppearanceStore feedbackAppearance = new AppearanceStore(root);
+            WordEntry formulate = new WordEntry { english = "formulate", chinese = "制定" };
+            Require(feedbackAppearance.Prompt("correct", formulate, "formulating",
+                    "formulating") == "✓ 正确：formulating",
+                "旧默认答对提示迁移为显示例句中的实际答案词形");
+            GameEngine clozeEngine = new GameEngine(
+                new DataLoader(Path.Combine(clozeRoot, "data")), clozeNotebooks);
+            clozeEngine.AnswerValidator = clozeStore.IsCorrect;
+            clozeEngine.StartGame("book1", new List<string> { "unit1" }, "all", "sequential",
+                "example", false, false);
+            Require(clozeEngine.GetExampleQuestion().answer == "unlearning"
+                && clozeEngine.CheckAnswer("unlearning").Correct,
+                "自由练习例句题同样按当前句中的词形判定");
             StudyList review = store.StartListReview(firstDay.AddDays(2));
             Require(review.sourceListIds.Count == 2 && review.sourceListIds[0] == first.id
                 && review.sourceListIds[1] == second.id, "按时间正序呈现过去列表");
@@ -234,12 +573,16 @@ namespace EnglishDictationTool
                 "english,chinese\nbase,基础\n", new UTF8Encoding(false));
             string externalCsv = Path.Combine(libraryRoot, "external.csv");
             File.WriteAllText(externalCsv,
-                "english,chinese,examples\nimported,导入的,e.g. [[imported]].\n", new UTF8Encoding(false));
+                "english,chinese,examples,part_of_speech\nimported,导入的,e.g. [[imported]].,noun\n",
+                new UTF8Encoding(false));
             DataLoader libraryLoader = new DataLoader(Path.Combine(libraryRoot, "data"));
             Require(libraryLoader.ValidateCsvFile(externalCsv) == 1, "外部 CSV 表头与词数校验");
             libraryLoader.ImportCsv(externalCsv, "custom", "unitA", false);
+            WordEntry importedWithPart = libraryLoader.LoadWordList("custom", new[] { "unitA" })[0];
             Require(libraryLoader.GetAvailableBooks().Contains("custom")
-                && libraryLoader.LoadWordList("custom", new[] { "unitA" })[0].english == "imported",
+                && importedWithPart.english == "imported"
+                && importedWithPart.partOfSpeech == "n."
+                && PartOfSpeech.DisplayChinese(importedWithPart) == "n. 导入的",
                 "外部 CSV 导入为新词书");
             NotebookStore libraryNotebooks = new NotebookStore(libraryRoot);
             StudyStore libraryStore = new StudyStore(libraryRoot, libraryLoader, libraryNotebooks);
@@ -304,6 +647,45 @@ namespace EnglishDictationTool
                 && File.Exists(Path.Combine(manual.path, "appearance.json"))
                 && File.Exists(Path.Combine(manual.path, "pronunciation.json"))
                 && File.Exists(Path.Combine(manual.path, imported)), "全量备份包含外观与图片");
+            string cleanupRoot = Path.Combine(root, "backup_readonly_cleanup_test");
+            Directory.CreateDirectory(Path.Combine(cleanupRoot, "data", "book1"));
+            File.WriteAllText(Path.Combine(cleanupRoot, "data", "book1", "unit1.csv"),
+                "english,chinese\nalpha,阿尔法\n", new UTF8Encoding(false));
+            string readOnly = Path.Combine(cleanupRoot, "runtime-note.txt");
+            File.WriteAllText(readOnly, "keep", new UTF8Encoding(false));
+            File.SetAttributes(readOnly, File.GetAttributes(readOnly) | FileAttributes.ReadOnly);
+            string gitPack = Path.Combine(cleanupRoot, "data", "developer-copy", ".git", "objects", "pack");
+            Directory.CreateDirectory(gitPack);
+            File.WriteAllText(Path.Combine(gitPack, "pack-test.idx"), "git metadata", new UTF8Encoding(false));
+            foreach (string transient in new[] { "_build-test", "_qa-test", "_compat-test",
+                "_upgrade_backups", "tmp" })
+            {
+                string folder = Path.Combine(cleanupRoot, "data", transient);
+                Directory.CreateDirectory(folder);
+                File.WriteAllText(Path.Combine(folder, "large-test.bin"), "temporary",
+                    new UTF8Encoding(false));
+            }
+            File.WriteAllText(Path.Combine(cleanupRoot, "data", "_test-report.json"), "{}",
+                new UTF8Encoding(false));
+            File.WriteAllText(Path.Combine(cleanupRoot, "data", "formal-preview.png"), "preview",
+                new UTF8Encoding(false));
+            string keptSource = Path.Combine(cleanupRoot, "data", "source");
+            Directory.CreateDirectory(keptSource);
+            File.WriteAllText(Path.Combine(keptSource, "README.md"), "source is retained",
+                new UTF8Encoding(false));
+            BackupService cleanupBackups = new BackupService(cleanupRoot);
+            cleanupBackups.Create(false, 1);
+            cleanupBackups.Create(false, 1);
+            BackupInfo latestCleanup = cleanupBackups.List("auto").Single();
+            Require(File.Exists(Path.Combine(latestCleanup.path, "runtime-note.txt"))
+                && File.Exists(Path.Combine(latestCleanup.path, "data", "source", "README.md"))
+                && !Directory.Exists(Path.Combine(latestCleanup.path, "data", "developer-copy", ".git"))
+                && !Directory.Exists(Path.Combine(latestCleanup.path, "data", "_qa-test"))
+                && !Directory.Exists(Path.Combine(latestCleanup.path, "data", "_compat-test"))
+                && !Directory.Exists(Path.Combine(latestCleanup.path, "data", "tmp"))
+                && !File.Exists(Path.Combine(latestCleanup.path, "data", "_test-report.json"))
+                && !File.Exists(Path.Combine(latestCleanup.path, "data", "formal-preview.png")),
+                "自动备份保留运行与源码数据并排除开发测试临时文件");
             Dictionary<string, object> result = new Dictionary<string, object>
             {
                 { "ok", true }, { "fixture", root }, { "studyDayBoundary", true },
@@ -312,7 +694,14 @@ namespace EnglishDictationTool
                 { "readOnlyHistory", true }, { "appearancePersistence", true },
                 { "pronunciationPersistence", true }, { "independentSessions", true },
                 { "manualEnd", true }, { "liveQuestionSettings", true },
-                { "csvImportAndBookRename", true }
+                { "csvImportAndBookRename", true }, { "exampleInflections", true },
+                { "correctFeedbackInflection", true },
+                { "backupReadOnlyCleanup", true }, { "backupTransientExclusion", true },
+                { "stagedExampleHints", true },
+                { "typedExampleDirectSubmit", true }, { "duplicateWordMerging", true },
+                { "duplicateProgressMigration", true }, { "allExamplesRequired", true },
+                { "exampleStatsOncePerList", true }, { "partOfSpeechDisplay", true },
+                { "partOfSpeechMigration", true }, { "partOfSpeechImport", true }
             };
             File.WriteAllText(report, new JavaScriptSerializer().Serialize(result), new UTF8Encoding(false));
             return 0;

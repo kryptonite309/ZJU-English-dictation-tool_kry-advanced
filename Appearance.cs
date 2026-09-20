@@ -49,7 +49,7 @@ namespace EnglishDictationTool
                 settings.backgrounds[key] = new BackgroundAppearance
                 { color = Color.FromArgb(12, 12, 12).ToArgb(), image = "", fit = "cover", shade = 35 };
             settings.prompts = new Dictionary<string, string>();
-            settings.prompts["correct"] = "✓ 正确：{word}";
+            settings.prompts["correct"] = "✓ 正确：{answer}";
             settings.prompts["error"] = "✗ 错误；正确答案：{answer}";
             settings.prompts["mastered"] = "已斩并移入已掌握：{word}";
             return settings;
@@ -125,10 +125,16 @@ namespace EnglishDictationTool
 
         public string Prompt(string kind, WordEntry word, string input)
         {
+            return Prompt(kind, word, input, null);
+        }
+
+        public string Prompt(string kind, WordEntry word, string input, string answerOverride)
+        {
             string template;
             if (!Settings.prompts.TryGetValue(kind, out template)) template = "{word}";
             string clean = word == null ? "" : GameEngine.CleanEnglish(word);
-            return (template ?? "").Replace("{word}", clean).Replace("{answer}", clean)
+            string answer = string.IsNullOrWhiteSpace(answerOverride) ? clean : answerOverride;
+            return (template ?? "").Replace("{word}", clean).Replace("{answer}", answer)
                 .Replace("{input}", input ?? "");
         }
 
@@ -146,6 +152,13 @@ namespace EnglishDictationTool
             if (settings.text == null) settings.text = new Dictionary<string, TextAppearance>();
             if (settings.backgrounds == null) settings.backgrounds = new Dictionary<string, BackgroundAppearance>();
             if (settings.prompts == null) settings.prompts = new Dictionary<string, string>();
+            // v1.1.7 之前的默认答对提示使用词条原形。仅迁移完全未修改的旧默认文案，
+            // 用户自行编写的包含 {word} 的提示仍保持原样。
+            string legacyCorrectPrompt;
+            if (settings.prompts.TryGetValue("correct", out legacyCorrectPrompt)
+                && string.Equals(legacyCorrectPrompt, "✓ 正确：{word}",
+                    StringComparison.Ordinal))
+                settings.prompts["correct"] = defaults.prompts["correct"];
             foreach (KeyValuePair<string, TextAppearance> entry in defaults.text)
             {
                 if (!settings.text.ContainsKey(entry.Key) || settings.text[entry.Key] == null)

@@ -162,7 +162,8 @@ namespace EnglishDictationTool
             {
                 candidates = candidates.Where(item =>
                     (item.english ?? string.Empty).IndexOf(query, StringComparison.CurrentCultureIgnoreCase) >= 0
-                    || (item.chinese ?? string.Empty).IndexOf(query, StringComparison.CurrentCultureIgnoreCase) >= 0);
+                    || PartOfSpeech.DisplayChinese(item).IndexOf(query,
+                        StringComparison.CurrentCultureIgnoreCase) >= 0);
             }
 
             words.BeginUpdate();
@@ -175,9 +176,9 @@ namespace EnglishDictationTool
                     ListViewItem row = new ListViewItem(GameEngine.CleanEnglish(word));
                     row.SubItems.Add(Notebooks.DisplayName(notebook));
                     row.SubItems.Add(notebooks.GetCorrectCount(word).ToString());
-                    row.SubItems.Add(word.chinese ?? string.Empty);
+                    row.SubItems.Add(PartOfSpeech.DisplayChinese(word));
                     row.ToolTipText = (word.english ?? string.Empty) + Environment.NewLine
-                        + (word.chinese ?? string.Empty);
+                        + PartOfSpeech.DisplayChinese(word);
                     row.Tag = word;
                     words.Items.Add(row);
                     if (selected != null && selected.Equals(word)) row.Selected = true;
@@ -202,7 +203,7 @@ namespace EnglishDictationTool
             WordEntry word = (WordEntry)words.SelectedItems[0].Tag;
             destination.SelectedIndex = Array.IndexOf(Notebooks.All, notebooks.GetNotebook(word));
             details.Text = (word.english ?? string.Empty) + Environment.NewLine
-                + (word.chinese ?? string.Empty) + Environment.NewLine
+                + PartOfSpeech.DisplayChinese(word) + Environment.NewLine
                 + (word.examples ?? string.Empty);
         }
 

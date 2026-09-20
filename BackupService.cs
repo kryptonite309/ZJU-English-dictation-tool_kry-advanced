@@ -68,9 +68,7 @@ namespace EnglishDictationTool
                     List<BackupInfo> backups = List("auto");
                     foreach (BackupInfo old in backups.Skip(Math.Max(1, autoKeep)))
                     {
-                        if ((File.GetAttributes(old.path) & FileAttributes.ReparsePoint) != 0)
-                            throw new IOException("备份目录是链接，拒绝自动清理：" + old.path);
-                        Directory.Delete(old.path, true);
+                        DeleteBackupDirectory(old.path, Path.Combine(backupRoot, "auto"));
                     }
                 }
                 return info;
@@ -115,9 +113,7 @@ namespace EnglishDictationTool
                     parent.TrimEnd(Path.DirectorySeparatorChar), StringComparison.OrdinalIgnoreCase)
                 || !File.Exists(Path.Combine(target, "backup_manifest.json")))
                 throw new InvalidOperationException("只能删除明确选中的完整手动备份。");
-            if ((File.GetAttributes(target) & FileAttributes.ReparsePoint) != 0)
-                throw new IOException("备份目录是链接，拒绝删除。");
-            Directory.Delete(target, true);
+            DeleteBackupDirectory(target, Path.Combine(backupRoot, "manual"));
         }
 
         public void BeginRestore(string snapshot)
@@ -192,13 +188,75 @@ namespace EnglishDictationTool
 
         private IEnumerable<string> EnumerateProjectFiles(string directory)
         {
-            foreach (string file in Directory.GetFiles(directory)) yield return file;
+            foreach (string file in Directory.GetFiles(directory))
+            {
+                if (IsTransientDevelopmentFile(file)) continue;
+                yield return file;
+            }
             foreach (string child in Directory.GetDirectories(directory))
             {
                 if (string.Equals(Path.GetFullPath(child).TrimEnd(Path.DirectorySeparatorChar),
                     backupRoot, StringComparison.OrdinalIgnoreCase)) continue;
+                DirectoryInfo info = new DirectoryInfo(child);
+                if (string.Equals(info.Name, ".git", StringComparison.OrdinalIgnoreCase)) continue;
+                if (IsTransientDevelopmentDirectory(info)) continue;
+                if ((info.Attributes & FileAttributes.ReparsePoint) != 0) continue;
                 foreach (string file in EnumerateProjectFiles(child)) yield return file;
             }
+        }
+
+        private bool IsTransientDevelopmentDirectory(DirectoryInfo directory)
+        {
+            string dataRoot = Path.GetFullPath(Path.Combine(root, "data"))
+                .TrimEnd(Path.DirectorySeparatorChar);
+            string parent = Path.GetFullPath(directory.Parent.FullName)
+                .TrimEnd(Path.DirectorySeparatorChar);
+            if (!string.Equals(parent, dataRoot, StringComparison.OrdinalIgnoreCase)) return false;
+            return directory.Name.StartsWith("_", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(directory.Name, "tmp", StringComparison.OrdinalIgnoreCase);
+        }
+
+        private bool IsTransientDevelopmentFile(string file)
+        {
+            string dataRoot = Path.GetFullPath(Path.Combine(root, "data"))
+                .TrimEnd(Path.DirectorySeparatorChar);
+            string parent = Path.GetFullPath(Path.GetDirectoryName(file))
+                .TrimEnd(Path.DirectorySeparatorChar);
+            if (!string.Equals(parent, dataRoot, StringComparison.OrdinalIgnoreCase)) return false;
+            string name = Path.GetFileName(file);
+            return name.StartsWith("_", StringComparison.OrdinalIgnoreCase)
+                || name.StartsWith("formal-", StringComparison.OrdinalIgnoreCase)
+                || name.StartsWith("install-v", StringComparison.OrdinalIgnoreCase)
+                || name.StartsWith("notebook-report-", StringComparison.OrdinalIgnoreCase)
+                || name.StartsWith("notebook-v", StringComparison.OrdinalIgnoreCase)
+                || name.StartsWith("study-report-", StringComparison.OrdinalIgnoreCase)
+                || name.StartsWith("study-v", StringComparison.OrdinalIgnoreCase)
+                || name.StartsWith("pos-audit-", StringComparison.OrdinalIgnoreCase)
+                || name.StartsWith("example-audit-", StringComparison.OrdinalIgnoreCase);
+        }
+
+        private static void DeleteBackupDirectory(string path, string expectedParent)
+        {
+            string target = Path.GetFullPath(path).TrimEnd(Path.DirectorySeparatorChar);
+            string parent = Path.GetFullPath(expectedParent).TrimEnd(Path.DirectorySeparatorChar);
+            string actualParent = Path.GetDirectoryName(target).TrimEnd(Path.DirectorySeparatorChar);
+            if (!string.Equals(parent, actualParent, StringComparison.OrdinalIgnoreCase))
+                throw new InvalidOperationException("备份清理目标超出允许范围：" + target);
+            if (!Directory.Exists(target)) return;
+            ClearDeleteAttributes(target);
+            Directory.Delete(target, true);
+        }
+
+        private static void ClearDeleteAttributes(string directory)
+        {
+            FileAttributes attributes = File.GetAttributes(directory);
+            if ((attributes & FileAttributes.ReparsePoint) != 0)
+                throw new IOException("备份目录包含链接，拒绝清理：" + directory);
+            foreach (string file in Directory.GetFiles(directory))
+                File.SetAttributes(file, File.GetAttributes(file) & ~FileAttributes.ReadOnly);
+            foreach (string child in Directory.GetDirectories(directory))
+                ClearDeleteAttributes(child);
+            File.SetAttributes(directory, attributes & ~FileAttributes.ReadOnly);
         }
     }
 }

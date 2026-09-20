@@ -115,12 +115,14 @@ namespace EnglishDictationTool
         public string english { get; set; }
         public string chinese { get; set; }
         public string examples { get; set; }
+        public string partOfSpeech { get; set; }
 
         public WordEntry()
         {
             english = string.Empty;
             chinese = string.Empty;
             examples = string.Empty;
+            partOfSpeech = string.Empty;
         }
 
         public bool Equals(WordEntry other)
@@ -128,7 +130,8 @@ namespace EnglishDictationTool
             if (ReferenceEquals(other, null)) return false;
             return string.Equals(english, other.english, StringComparison.Ordinal)
                 && string.Equals(chinese, other.chinese, StringComparison.Ordinal)
-                && string.Equals(examples, other.examples, StringComparison.Ordinal);
+                && string.Equals(examples, other.examples, StringComparison.Ordinal)
+                && string.Equals(partOfSpeech, other.partOfSpeech, StringComparison.Ordinal);
         }
 
         public override bool Equals(object obj)
@@ -144,8 +147,323 @@ namespace EnglishDictationTool
                 hash = hash * 31 + (english ?? string.Empty).GetHashCode();
                 hash = hash * 31 + (chinese ?? string.Empty).GetHashCode();
                 hash = hash * 31 + (examples ?? string.Empty).GetHashCode();
+                hash = hash * 31 + (partOfSpeech ?? string.Empty).GetHashCode();
                 return hash;
             }
+        }
+    }
+
+    internal static class PartOfSpeech
+    {
+        private static readonly string[] DisplayOrder =
+        {
+            "n.", "v.", "adj.", "adv.", "pron.", "prep.", "conj.",
+            "interj.", "det.", "num.", "abbr."
+        };
+
+        private static readonly Regex LeadingTag = new Regex(
+            @"^\s*(?:\d+\)\s*)?(?<tag>noun|verb|adjective|adverb|pronoun|preposition|conjunction|interjection|determiner|number|numeral|abbreviation|n\.|v\.|vt\.|vi\.|adj\.|a\.|adv\.|pron\.|prep\.|conj\.|interj\.|det\.|num\.|abbr\.)\s*",
+            RegexOptions.Compiled | RegexOptions.IgnoreCase | RegexOptions.Multiline);
+
+        public static bool IsPhrase(string english)
+        {
+            return Regex.IsMatch(DataLoader.Sanitize(english), @"\s");
+        }
+
+        public static string Normalize(string raw)
+        {
+            HashSet<string> tags = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (string value in Regex.Split((raw ?? string.Empty).ToLowerInvariant(), @"[/,;|\s]+"))
+            {
+                string token = Regex.Replace(value, @":\d+(?:\.\d+)?$", string.Empty)
+                    .Trim().TrimEnd('.');
+                string normalized = NormalizeToken(token);
+                if (normalized.Length > 0) tags.Add(normalized);
+            }
+            return string.Join("/", DisplayOrder.Where(tags.Contains));
+        }
+
+        public static string Merge(params string[] values)
+        {
+            return Normalize(string.Join("/", values == null ? new string[0] : values));
+        }
+
+        public static string SelectForDefinition(string english, string chinese, string fallback)
+        {
+            if (IsPhrase(english)) return string.Empty;
+            string explicitTags = ExtractLeading(chinese);
+            if (explicitTags.Length > 0) return explicitTags;
+
+            string source = chinese ?? string.Empty;
+            if (Regex.IsMatch(source, @"(?i)\[(?:C|U)(?:\s*[,\]]|\s)")) return "n.";
+            if (Regex.IsMatch(source, @"(?i)\((?:only|usu\.|usually|not)\s+before\s+noun\)"))
+                return "adj.";
+
+            string normalizedFallback = Normalize(fallback);
+            if (Regex.IsMatch(DataLoader.Sanitize(english), @"(?i)ly$")
+                && Contains(normalizedFallback, "adv.")) return "adv.";
+            if (normalizedFallback.Split(new[] { '/' }, StringSplitOptions.RemoveEmptyEntries).Length <= 1)
+                return normalizedFallback;
+
+            string gloss = Regex.Replace(source, @"^\s*\d+\)\s*", string.Empty).Trim();
+            if (Contains(normalizedFallback, "adv.") && Regex.IsMatch(gloss,
+                @"(?i)^(?:in\s+(?:a|an|the)\s+.+?way\b|used\s+when\b|according\s+to\b|wrongly\b)"))
+                return "adv.";
+            if (Contains(normalizedFallback, "adj.") && Regex.IsMatch(gloss,
+                @"(?i)^(?:able\b|based\b|belonging\b|connected\b|consisting\b|containing\b|done\b|existing\b|expected\b|feeling\b|full\b|having\b|involving\b|lasting\b|likely\b|made\b|making\b|not\b|relating\b|shared\b|showing\b|similar\b|suitable\b|used\b|wrong\b)"))
+                return "adj.";
+            if (Contains(normalizedFallback, "n.") && Regex.IsMatch(gloss,
+                @"(?i)^(?:a|an|the|one|someone|somebody|something)\b")) return "n.";
+            return normalizedFallback;
+        }
+
+        public static string DisplayChinese(WordEntry word)
+        {
+            if (word == null) return string.Empty;
+            string chinese = word.chinese ?? string.Empty;
+            if (IsPhrase(word.english)) return chinese;
+            string part = Normalize(word.partOfSpeech);
+            if (part.Length == 0) part = ExtractLeading(chinese);
+            Match existing = LeadingTag.Match(chinese);
+            bool beginsWithTag = existing.Success
+                && string.IsNullOrWhiteSpace(chinese.Substring(0, existing.Index));
+            if (part.Length == 0 || beginsWithTag) return chinese;
+            return part + " " + chinese;
+        }
+
+        public static string DisplayPrefix(WordEntry word)
+        {
+            if (word == null || IsPhrase(word.english)) return string.Empty;
+            string part = Normalize(word.partOfSpeech);
+            return part.Length > 0 ? part : ExtractLeading(word.chinese);
+        }
+
+        public static bool HasLeadingTag(string text)
+        {
+            string value = text ?? string.Empty;
+            Match existing = LeadingTag.Match(value);
+            return existing.Success && string.IsNullOrWhiteSpace(value.Substring(0, existing.Index));
+        }
+
+        private static string ExtractLeading(string text)
+        {
+            List<string> tags = new List<string>();
+            foreach (Match match in LeadingTag.Matches(text ?? string.Empty))
+            {
+                string normalized = NormalizeToken(match.Groups["tag"].Value);
+                if (normalized.Length > 0) tags.Add(normalized);
+            }
+            return Normalize(string.Join("/", tags));
+        }
+
+        private static bool Contains(string normalized, string tag)
+        {
+            return (normalized ?? string.Empty).Split('/').Contains(tag);
+        }
+
+        private static string NormalizeToken(string token)
+        {
+            switch ((token ?? string.Empty).Trim().TrimEnd('.').ToLowerInvariant())
+            {
+                case "n": case "noun": return "n.";
+                case "v": case "verb": case "vt": case "vi": return "v.";
+                case "a": case "s": case "adj": case "adjective": return "adj.";
+                case "r": case "ad": case "adv": case "adverb": return "adv.";
+                case "pron": case "pronoun": return "pron.";
+                case "prep": case "preposition": return "prep.";
+                case "conj": case "conjunction": return "conj.";
+                case "interj": case "interjection": return "interj.";
+                case "det": case "determiner": case "article": case "art": return "det.";
+                case "num": case "number": case "numeral": return "num.";
+                case "abbr": case "abbreviation": return "abbr.";
+                default: return string.Empty;
+            }
+        }
+    }
+
+    internal sealed class ExampleQuestion
+    {
+        public string prompt { get; set; }
+        public string answer { get; set; }
+        public List<string> answers { get; set; }
+
+        public string Render(bool showFirstLetter)
+        {
+            string blank = "________";
+            if (showFirstLetter && !string.IsNullOrWhiteSpace(answer))
+            {
+                string first = answer.Trim().Substring(0, 1);
+                blank = first + "_______";
+            }
+            return (prompt ?? string.Empty).Replace("________", blank);
+        }
+    }
+
+    internal static class ExampleRevealFlow
+    {
+        public static int LastRevealStage(bool firstLetterEnabled)
+        {
+            return firstLetterEnabled ? 2 : 1;
+        }
+
+        public static int NextStage(int current, bool firstLetterEnabled)
+        {
+            return Math.Min(LastRevealStage(firstLetterEnabled), Math.Max(0, current) + 1);
+        }
+
+        public static bool ShowsFirstLetter(int stage, bool firstLetterEnabled)
+        {
+            return firstLetterEnabled && stage >= 1;
+        }
+
+        public static bool ShowsMeaning(int stage, bool firstLetterEnabled)
+        {
+            return stage >= LastRevealStage(firstLetterEnabled);
+        }
+
+        public static bool ReadyToSubmit(int stage, bool firstLetterEnabled)
+        {
+            return stage >= LastRevealStage(firstLetterEnabled);
+        }
+
+        public static bool HasTypedAnswer(string input)
+        {
+            return !string.IsNullOrWhiteSpace(input);
+        }
+    }
+
+    internal static class ExampleCloze
+    {
+        private static readonly Regex Marker = new Regex(@"\[\[(.*?)\]\]",
+            RegexOptions.Compiled | RegexOptions.Singleline);
+        private static readonly Regex EnglishToken = new Regex(@"[A-Za-z]+(?:'[A-Za-z]+)?",
+            RegexOptions.Compiled);
+
+        public static List<ExampleQuestion> Questions(WordEntry word)
+        {
+            List<ExampleQuestion> result = new List<ExampleQuestion>();
+            if (word == null || string.IsNullOrWhiteSpace(word.examples)) return result;
+            HashSet<string> seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (string raw in word.examples.Split(new[] { '；' }, StringSplitOptions.RemoveEmptyEntries))
+            {
+                ExampleQuestion question = Create(word, raw.Trim());
+                if (question == null) continue;
+                string key = DataLoader.Sanitize(question.prompt) + "\u001f"
+                    + DataLoader.Sanitize(question.answer);
+                if (seen.Add(key)) result.Add(question);
+            }
+            return result;
+        }
+
+        public static ExampleQuestion First(WordEntry word)
+        {
+            return Questions(word).FirstOrDefault();
+        }
+
+        public static string PlainText(string sentence)
+        {
+            return Marker.Replace(sentence ?? string.Empty, "$1");
+        }
+
+        private static ExampleQuestion Create(WordEntry word, string sentence)
+        {
+            MatchCollection all = Marker.Matches(sentence ?? string.Empty);
+            if (all.Count == 0) return null;
+            List<Match> selected = new List<Match>();
+            if (all.Count == 1)
+            {
+                selected.Add(all[0]);
+            }
+            else
+            {
+                List<string> headTokens = Tokens(GameEngine.CleanEnglish(word));
+                List<Match> related = all.Cast<Match>()
+                    .Where(match => IsRelated(match.Groups[1].Value, headTokens)).ToList();
+                if (related.Count == 0) return null;
+                if (headTokens.Count <= 1)
+                {
+                    selected.Add(related[0]);
+                }
+                else
+                {
+                    Match wholePhrase = related.FirstOrDefault(match =>
+                        Tokens(match.Groups[1].Value).Count > 1);
+                    if (wholePhrase != null) selected.Add(wholePhrase);
+                    else selected.AddRange(related);
+                }
+            }
+
+            Match first = selected.First();
+            Match last = selected.Last();
+            int start = first.Index;
+            int end = last.Index + last.Length;
+            string answer = PlainText(sentence.Substring(start, end - start)).Trim();
+            if (answer.Length == 0) return null;
+            string prompt = PlainText(sentence.Substring(0, start)) + "________"
+                + PlainText(sentence.Substring(end));
+            return new ExampleQuestion
+            {
+                prompt = prompt,
+                answer = answer,
+                answers = new List<string> { answer }
+            };
+        }
+
+        private static bool IsRelated(string marked, List<string> headTokens)
+        {
+            if (headTokens.Count == 0) return false;
+            foreach (string markedToken in Tokens(marked))
+                if (headTokens.Any(head => SameWordFamily(head, markedToken))) return true;
+            return false;
+        }
+
+        private static List<string> Tokens(string text)
+        {
+            return EnglishToken.Matches(text ?? string.Empty).Cast<Match>()
+                .Select(match => match.Value.ToLowerInvariant()).ToList();
+        }
+
+        private static bool SameWordFamily(string lemma, string form)
+        {
+            if (lemma == form) return true;
+            Dictionary<string, string[]> irregular = new Dictionary<string, string[]>(StringComparer.OrdinalIgnoreCase)
+            {
+                { "be", new[] { "am", "is", "are", "was", "were", "been", "being" } },
+                { "do", new[] { "does", "did", "done", "doing" } },
+                { "go", new[] { "goes", "went", "gone", "going" } },
+                { "come", new[] { "comes", "came", "coming" } },
+                { "get", new[] { "gets", "got", "gotten", "getting" } },
+                { "have", new[] { "has", "had", "having" } },
+                { "make", new[] { "makes", "made", "making" } },
+                { "run", new[] { "runs", "ran", "running" } },
+                { "speak", new[] { "speaks", "spoke", "spoken", "speaking" } },
+                { "take", new[] { "takes", "took", "taken", "taking" } },
+                { "teach", new[] { "teaches", "taught", "teaching" } },
+                { "write", new[] { "writes", "wrote", "written", "writing" } }
+            };
+            string[] forms;
+            if (irregular.TryGetValue(lemma, out forms) && forms.Contains(form)) return true;
+            HashSet<string> regular = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+            {
+                lemma + "s", lemma + "es", lemma + "ed", lemma + "ing"
+            };
+            if (lemma.EndsWith("e", StringComparison.OrdinalIgnoreCase) && lemma.Length > 1)
+            {
+                regular.Add(lemma + "d");
+                regular.Add(lemma.Substring(0, lemma.Length - 1) + "ing");
+            }
+            if (lemma.EndsWith("y", StringComparison.OrdinalIgnoreCase) && lemma.Length > 1)
+            {
+                regular.Add(lemma.Substring(0, lemma.Length - 1) + "ies");
+                regular.Add(lemma.Substring(0, lemma.Length - 1) + "ied");
+            }
+            if (lemma.Length >= 3 && !"aeiou".Contains(lemma[lemma.Length - 1])
+                && "aeiou".Contains(lemma[lemma.Length - 2]))
+            {
+                regular.Add(lemma + lemma[lemma.Length - 1] + "ing");
+                regular.Add(lemma + lemma[lemma.Length - 1] + "ed");
+            }
+            return regular.Contains(form);
         }
     }
 
@@ -216,6 +534,7 @@ namespace EnglishDictationTool
     {
         private readonly string dataDirectory;
         private readonly NaturalStringComparer comparer = new NaturalStringComparer();
+        private readonly Dictionary<string, string> defaultPartsOfSpeech;
 
         public string DataDirectory { get { return dataDirectory; } }
 
@@ -226,6 +545,7 @@ namespace EnglishDictationTool
             {
                 throw new DirectoryNotFoundException("未找到 data 目录：" + dataDirectory);
             }
+            defaultPartsOfSpeech = LoadPartOfSpeechMap();
         }
 
         public List<string> GetAvailableBooks()
@@ -275,26 +595,132 @@ namespace EnglishDictationTool
                 int englishIndex;
                 int chineseIndex;
                 int examplesIndex;
+                int partOfSpeechIndex;
                 if (!headers.TryGetValue("english", out englishIndex)
                     || !headers.TryGetValue("chinese", out chineseIndex))
                 {
                     continue;
                 }
-                headers.TryGetValue("examples", out examplesIndex);
+                bool hasExamples = headers.TryGetValue("examples", out examplesIndex);
+                bool hasPartOfSpeech = headers.TryGetValue("part_of_speech", out partOfSpeechIndex)
+                    || headers.TryGetValue("pos", out partOfSpeechIndex);
 
                 for (int rowIndex = 1; rowIndex < rows.Count; rowIndex++)
                 {
                     List<string> row = rows[rowIndex];
-                    string english = GetCell(row, englishIndex);
+                    string english = Sanitize(GetCell(row, englishIndex));
                     if (string.IsNullOrWhiteSpace(english)) continue;
+                    string chinese = Sanitize(GetCell(row, chineseIndex));
+                    string explicitPart = hasPartOfSpeech
+                        ? PartOfSpeech.Normalize(GetCell(row, partOfSpeechIndex)) : string.Empty;
+                    string mappedPart;
+                    defaultPartsOfSpeech.TryGetValue(Regex.Replace(english, @"\s+", " ").Trim(),
+                        out mappedPart);
 
                     result.Add(new WordEntry
                     {
-                        english = Sanitize(english),
-                        chinese = Sanitize(GetCell(row, chineseIndex)),
-                        examples = headers.ContainsKey("examples") ? Sanitize(GetCell(row, examplesIndex)) : string.Empty
+                        english = english,
+                        chinese = chinese,
+                        examples = hasExamples ? Sanitize(GetCell(row, examplesIndex)) : string.Empty,
+                        partOfSpeech = explicitPart.Length > 0
+                            ? (PartOfSpeech.IsPhrase(english) ? string.Empty : explicitPart)
+                            : PartOfSpeech.SelectForDefinition(english, chinese, mappedPart)
                     });
                 }
+            }
+            return MergeWordEntries(result);
+        }
+
+        public static string WordKey(WordEntry word)
+        {
+            string english = word == null ? string.Empty : Sanitize(word.english);
+            return Regex.Replace(english, @"\s+", " ").Trim().ToLowerInvariant();
+        }
+
+        public static List<WordEntry> MergeWordEntries(IEnumerable<WordEntry> words)
+        {
+            List<WordEntry> merged = new List<WordEntry>();
+            Dictionary<string, WordEntry> byEnglish = new Dictionary<string, WordEntry>(
+                StringComparer.OrdinalIgnoreCase);
+            foreach (WordEntry source in words ?? Enumerable.Empty<WordEntry>())
+            {
+                if (source == null || WordKey(source).Length == 0) continue;
+                string key = WordKey(source);
+                WordEntry target;
+                if (!byEnglish.TryGetValue(key, out target))
+                {
+                    target = new WordEntry
+                    {
+                        english = Sanitize(source.english),
+                        chinese = Sanitize(source.chinese),
+                        examples = Sanitize(source.examples),
+                        partOfSpeech = PartOfSpeech.IsPhrase(source.english) ? string.Empty
+                            : PartOfSpeech.Normalize(source.partOfSpeech)
+                    };
+                    byEnglish[key] = target;
+                    merged.Add(target);
+                    continue;
+                }
+                target.chinese = MergeField(target.chinese, source.chinese, "\n");
+                target.examples = MergeExamples(target.examples, source.examples);
+                target.partOfSpeech = PartOfSpeech.IsPhrase(target.english) ? string.Empty
+                    : PartOfSpeech.Merge(target.partOfSpeech, source.partOfSpeech);
+            }
+            return merged;
+        }
+
+        public static WordEntry MergeWordEntry(IEnumerable<WordEntry> words)
+        {
+            return MergeWordEntries(words).FirstOrDefault();
+        }
+
+        private static string MergeField(string current, string incoming, string separator)
+        {
+            current = Sanitize(current);
+            incoming = Sanitize(incoming);
+            if (incoming.Length == 0) return current;
+            if (current.Length == 0) return incoming;
+            if (string.Equals(current, incoming, StringComparison.Ordinal)) return current;
+            return current + separator + incoming;
+        }
+
+        private static string MergeExamples(string current, string incoming)
+        {
+            List<string> result = new List<string>();
+            foreach (string value in new[] { current, incoming })
+                foreach (string example in Sanitize(value).Split(new[] { '；' },
+                    StringSplitOptions.RemoveEmptyEntries))
+                {
+                    string cleaned = example.Trim();
+                    if (cleaned.Length > 0 && !result.Contains(cleaned)) result.Add(cleaned);
+                }
+            return string.Join("；", result);
+        }
+
+        private Dictionary<string, string> LoadPartOfSpeechMap()
+        {
+            Dictionary<string, string> result = new Dictionary<string, string>(
+                StringComparer.OrdinalIgnoreCase);
+            string file = Path.Combine(dataDirectory, "parts_of_speech.csv");
+            if (!File.Exists(file)) return result;
+            List<List<string>> rows = ParseCsv(ReadCsvText(file));
+            if (rows.Count == 0) return result;
+            Dictionary<string, int> headers = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+            for (int index = 0; index < rows[0].Count; index++)
+                headers[Sanitize(rows[0][index])] = index;
+            int englishIndex;
+            int partIndex;
+            if (!headers.TryGetValue("english", out englishIndex)
+                || (!headers.TryGetValue("part_of_speech", out partIndex)
+                    && !headers.TryGetValue("pos", out partIndex))) return result;
+            foreach (List<string> row in rows.Skip(1))
+            {
+                string english = Regex.Replace(Sanitize(GetCell(row, englishIndex)), @"\s+", " ").Trim();
+                string part = PartOfSpeech.Normalize(GetCell(row, partIndex));
+                if (english.Length == 0 || part.Length == 0 || PartOfSpeech.IsPhrase(english)) continue;
+                string existing;
+                result.TryGetValue(english, out existing);
+                result[english] = PartOfSpeech.Merge(existing, part);
             }
             return result;
         }
@@ -313,7 +739,7 @@ namespace EnglishDictationTool
             int chineseIndex;
             if (!headers.TryGetValue("english", out englishIndex)
                 || !headers.TryGetValue("chinese", out chineseIndex))
-                throw new InvalidDataException("CSV 必须包含 english 和 chinese 两列，可另加 examples 列。");
+                throw new InvalidDataException("CSV 必须包含 english 和 chinese 两列，可另加 examples 和 part_of_speech（或 pos）列。");
             int count = rows.Skip(1).Count(row => !string.IsNullOrWhiteSpace(GetCell(row, englishIndex)));
             if (count == 0) throw new InvalidDataException("CSV 中没有可导入的英文词条。");
             return count;
@@ -453,11 +879,12 @@ namespace EnglishDictationTool
         private readonly DataLoader loader;
         private readonly NotebookStore notebooks;
         private readonly Random random = new Random();
+        private List<ExampleQuestion> exampleDeck;
 
         public List<WordEntry> CurrentDeck { get; private set; }
         public int CurrentIndex { get; set; }
         public string QuestionMode { get; set; }
-        public Func<WordEntry, string, bool> AnswerValidator { get; set; }
+        public Func<WordEntry, string, string, IEnumerable<string>, bool> AnswerValidator { get; set; }
         public bool ShowFirstLetter { get; set; }
         public bool RetryOnWrong { get; private set; }
         public bool IsReviewMode { get; private set; }
@@ -468,6 +895,7 @@ namespace EnglishDictationTool
             loader = dataLoader;
             notebooks = notebookStore;
             CurrentDeck = new List<WordEntry>();
+            exampleDeck = new List<ExampleQuestion>();
             QuestionMode = "word";
         }
 
@@ -486,12 +914,34 @@ namespace EnglishDictationTool
             }
 
             if (orderMode == "random") Shuffle(deck);
-            CurrentDeck = deck;
+            exampleDeck = new List<ExampleQuestion>();
+            if (questionMode == "example")
+            {
+                List<WordEntry> expanded = new List<WordEntry>();
+                foreach (WordEntry word in deck)
+                {
+                    List<ExampleQuestion> questions = ExampleCloze.Questions(word);
+                    if (questions.Count == 0)
+                    {
+                        expanded.Add(word);
+                        exampleDeck.Add(null);
+                        continue;
+                    }
+                    foreach (ExampleQuestion question in questions)
+                    {
+                        expanded.Add(word);
+                        exampleDeck.Add(question);
+                    }
+                }
+                CurrentDeck = expanded;
+            }
+            else CurrentDeck = deck;
             CurrentIndex = 0;
             QuestionMode = questionMode;
             ShowFirstLetter = showFirstLetter;
             RetryOnWrong = retryOnWrong;
             IsReviewMode = false;
+            ClearExampleCache();
         }
 
         public bool StartReviewMode()
@@ -503,7 +953,20 @@ namespace EnglishDictationTool
             ShowFirstLetter = notebooks.ReviewFirstLetter;
             RetryOnWrong = false;
             IsReviewMode = true;
+            exampleDeck = new List<ExampleQuestion>();
+            ClearExampleCache();
             return true;
+        }
+
+        public ExampleQuestion GetExampleQuestion()
+        {
+            if (QuestionMode != "example") return null;
+            WordEntry current = GetNextQuestion();
+            if (current == null) return null;
+            if (CurrentIndex >= 0 && CurrentIndex < exampleDeck.Count)
+                return exampleDeck[CurrentIndex];
+            List<ExampleQuestion> questions = ExampleCloze.Questions(current);
+            return questions.FirstOrDefault();
         }
 
         public WordEntry GetNextQuestion()
@@ -524,12 +987,19 @@ namespace EnglishDictationTool
             WordEntry current = GetNextQuestion();
             if (current == null) return new AnswerOutcome();
 
-            bool correct = AnswerValidator != null ? AnswerValidator(current, userInput) : string.Equals(
-                DataLoader.Sanitize(userInput).ToLowerInvariant(),
-                CleanEnglish(current).ToLowerInvariant(),
-                StringComparison.Ordinal);
+            ExampleQuestion example = QuestionMode == "example" ? GetExampleQuestion() : null;
+            IEnumerable<string> expected = example == null ? null : example.answers;
+            bool correct = AnswerValidator != null
+                ? AnswerValidator(current, userInput, QuestionMode, expected)
+                : (QuestionMode == "example" && example != null
+                    ? example.answers.Any(value => string.Equals(
+                        DataLoader.Sanitize(userInput).ToLowerInvariant(),
+                        DataLoader.Sanitize(value).ToLowerInvariant(), StringComparison.Ordinal))
+                    : string.Equals(DataLoader.Sanitize(userInput).ToLowerInvariant(),
+                        CleanEnglish(current).ToLowerInvariant(), StringComparison.Ordinal));
 
             AnswerOutcome outcome = notebooks.RecordAnswer(current, correct, IsReviewMode);
+            outcome.CorrectAnswer = example == null ? CleanEnglish(current) : example.answer;
             CurrentIndex++;
             return outcome;
         }
@@ -569,6 +1039,24 @@ namespace EnglishDictationTool
             return DataLoader.Sanitize((word.english ?? string.Empty).Split(',')[0]);
         }
 
+        public static string ChineseHint(string text)
+        {
+            MatchCollection matches = Regex.Matches(text ?? string.Empty, @"[\u4e00-\u9fa5；，。（）]+");
+            List<string> hints = matches.Cast<Match>()
+                .Select(match => match.Value.Trim())
+                .Where(value => value.Length > 0)
+                .ToList();
+            return hints.Count == 0 ? (text ?? string.Empty).Trim() : string.Join(" / ", hints);
+        }
+
+        public static string ChineseHint(WordEntry word)
+        {
+            if (word == null) return string.Empty;
+            string hint = ChineseHint(word.chinese);
+            string prefix = PartOfSpeech.DisplayPrefix(word);
+            return prefix.Length == 0 || hint.Length == 0 ? hint : prefix + " " + hint;
+        }
+
         private void Shuffle(List<WordEntry> list)
         {
             for (int i = list.Count - 1; i > 0; i--)
@@ -578,6 +1066,10 @@ namespace EnglishDictationTool
                 list[i] = list[other];
                 list[other] = temp;
             }
+        }
+
+        private void ClearExampleCache()
+        {
         }
 
     }
@@ -688,6 +1180,7 @@ namespace EnglishDictationTool
         private readonly Random random = new Random();
         private Dictionary<string, string> keybindings;
         private WordEntry currentWord;
+        private int exampleRevealStage;
 
         private Panel settingsPanel;
         private FlowLayoutPanel quickActions;
@@ -731,7 +1224,7 @@ namespace EnglishDictationTool
             appearance = new AppearanceStore(projectRoot);
             keybindings = LoadKeybindings();
 
-            Text = "大英默写器 · KRY 增强版 v1.1.0";
+            Text = "大英默写器 · KRY 增强版 v1.1.7";
             StartPosition = FormStartPosition.CenterScreen;
             ClientSize = ModernUI.FitWindow(1500, 900);
             MinimumSize = new Size(960, 650);
@@ -794,6 +1287,13 @@ namespace EnglishDictationTool
             AppendToLog("答错提示", "error");
             AppendToLog("答对提示", "correct");
             AppendToLog("已斩提示", "mastered");
+        }
+
+        internal void FocusEndButtonPreview()
+        {
+            if (dailyNewEndButton == null || !dailyNewEndButton.Visible) return;
+            dailyNewEndButton.Focus();
+            dailyNewEndButton.Invalidate();
         }
 
         internal void SaveSettingsPreview(string outputFile)
@@ -943,9 +1443,9 @@ namespace EnglishDictationTool
             questionExample = MakeRadio("例句模式（例句填空）", false);
             answerColumn.Controls.Add(MakeRadioGroup("选择模式", questionWord, questionExample));
 
-            showFirstLetter = MakeCheckBox("显示首字母提示", false);
+            showFirstLetter = MakeCheckBox("普通拼写直接显示首字母", false);
             retryOnWrong = MakeCheckBox("答错后重试当前词", true);
-            answerColumn.Controls.Add(MakeGroup("额外提示", showFirstLetter));
+            answerColumn.Controls.Add(MakeGroup("普通拼写提示", showFirstLetter));
             answerColumn.Controls.Add(MakeGroup("答题选项", retryOnWrong));
 
             Button startButton = MakeButton("自由练习");
@@ -1072,6 +1572,19 @@ namespace EnglishDictationTool
         {
             if (shortcutCapture != null && shortcutCapture.Focused)
                 return base.ProcessCmdKey(ref msg, keyData);
+            if (IsFreeExampleActive() && keyData == Keys.Enter
+                && ExampleRevealFlow.HasTypedAnswer(inputLine.Text))
+            {
+                exampleRevealStage = ExampleRevealFlow.LastRevealStage(
+                    study.Settings.exampleFirstLetterHints);
+                SubmitAnswer();
+                return true;
+            }
+            if (IsFreeExampleActive() && keyData == (Keys)study.Settings.exampleHintKey)
+            {
+                AdvanceFreeExampleOrSubmit();
+                return true;
+            }
             if (keyData == notebooks.MasteryShortcut)
             {
                 MasterCurrentWord();
@@ -1240,7 +1753,8 @@ namespace EnglishDictationTool
             }
             if (shortcut == (Keys)study.Settings.undoKey
                 || shortcut == (Keys)study.Settings.manualBackupKey
-                || shortcut == (Keys)study.Settings.previewKey)
+                || shortcut == (Keys)study.Settings.previewKey
+                || shortcut == (Keys)study.Settings.exampleHintKey)
             {
                 ShowDarkDialog("快捷键冲突", "该按键已分配给每日学习中的其他操作。", false);
                 return;
@@ -1507,7 +2021,8 @@ namespace EnglishDictationTool
             string orderMode = orderRandom.Checked ? "random" : "sequential";
             string questionMode = questionExample.Checked ? "example" : "word";
             engine.StartGame(bookCombo.Text, selectedUnits, filterMode, orderMode,
-                questionMode, showFirstLetter.Checked, retryOnWrong.Checked);
+                questionMode, questionMode == "example" ? study.Settings.exampleFirstLetterHints
+                    : showFirstLetter.Checked, retryOnWrong.Checked);
 
             logArea.ClearContent();
             AppendToLog("--- 游戏开始 ---", "normal");
@@ -1540,6 +2055,7 @@ namespace EnglishDictationTool
         private void AskNextQuestion()
         {
             currentWord = engine.GetNextQuestion();
+            exampleRevealStage = 0;
             if (currentWord == null)
             {
                 AppendToLog("\n--- 恭喜！本轮已全部完成！---", "correct");
@@ -1552,8 +2068,7 @@ namespace EnglishDictationTool
             if (engine.QuestionMode == "example")
             {
                 int scanned = 0;
-                while (currentWord != null &&
-                    (string.IsNullOrWhiteSpace(currentWord.examples) || !currentWord.examples.Contains("[[")))
+                while (currentWord != null && engine.GetExampleQuestion() == null)
                 {
                     engine.CurrentIndex++;
                     scanned++;
@@ -1573,22 +2088,19 @@ namespace EnglishDictationTool
             int[] progress = engine.GetProgress();
             if (engine.QuestionMode == "example")
             {
-                string[] examples = currentWord.examples.Split(new[] { '；' }, StringSplitOptions.RemoveEmptyEntries);
-                string sentence = examples.Length == 0 ? currentWord.examples : examples[random.Next(examples.Length)];
-                string blanked = Regex.Replace(sentence, @"\[\[(.*?)\]\]", delegate(Match match)
-                {
-                    string hidden = match.Groups[1].Value;
-                    if (engine.ShowFirstLetter && hidden.Length > 0) return hidden.Substring(0, 1) + "_______";
-                    return "________";
-                });
+                ExampleQuestion example = engine.GetExampleQuestion();
+                string blanked = example == null ? string.Empty : example.Render(false);
                 AppendToLog(string.Format("\n({0}/{1}) 例句填空:", progress[0], progress[1]), "normal");
                 AppendToLog("  " + blanked, "example");
+                AppendToLog("  按 " + ShortcutText((Keys)study.Settings.exampleHintKey)
+                    + (engine.ShowFirstLetter ? " 显示首字母提示。" : " 显示中文释义。"), "normal");
             }
             else
             {
-                string hint = ExtractChineseHint(currentWord.chinese);
+                string hint = ExtractChineseHint(currentWord);
                 AppendToLog(string.Format("\n({0}/{1}) 请输入:", progress[0], progress[1]), "normal");
-                AppendToLog("  " + (string.IsNullOrEmpty(hint) ? currentWord.chinese : hint), "meaning");
+                AppendToLog("  " + (string.IsNullOrEmpty(hint)
+                    ? PartOfSpeech.DisplayChinese(currentWord) : hint), "meaning");
                 if (engine.ShowFirstLetter)
                 {
                     string answer = GameEngine.CleanEnglish(currentWord);
@@ -1600,25 +2112,68 @@ namespace EnglishDictationTool
             inputLine.Focus();
         }
 
-        private static string ExtractChineseHint(string text)
+        private static string ExtractChineseHint(WordEntry word)
         {
-            MatchCollection matches = Regex.Matches(text ?? string.Empty, @"[\u4e00-\u9fa5；，。（）]+") ;
-            List<string> hints = matches.Cast<Match>()
-                .Select(match => match.Value.Trim())
-                .Where(value => value.Length > 0)
-                .ToList();
-            return string.Join(" / ", hints);
+            return GameEngine.ChineseHint(word);
+        }
+
+        private bool IsFreeExampleActive()
+        {
+            return currentWord != null && engine.QuestionMode == "example"
+                && engine.GetExampleQuestion() != null;
+        }
+
+        private void AdvanceFreeExampleOrSubmit()
+        {
+            if (!IsFreeExampleActive()) return;
+            bool firstLetter = study.Settings.exampleFirstLetterHints;
+            if (ExampleRevealFlow.ReadyToSubmit(exampleRevealStage, firstLetter))
+            {
+                SubmitAnswer();
+                return;
+            }
+
+            exampleRevealStage = ExampleRevealFlow.NextStage(exampleRevealStage, firstLetter);
+            ExampleQuestion example = engine.GetExampleQuestion();
+            if (ExampleRevealFlow.ShowsFirstLetter(exampleRevealStage, firstLetter)
+                && !ExampleRevealFlow.ShowsMeaning(exampleRevealStage, firstLetter))
+            {
+                string initial = string.IsNullOrWhiteSpace(example.answer)
+                    ? string.Empty : example.answer.Trim().Substring(0, 1);
+                AppendToLog("  首字母提示：" + initial, "normal");
+                AppendToLog("  再按 " + ShortcutText((Keys)study.Settings.exampleHintKey)
+                    + " 显示中文释义。", "normal");
+            }
+            else
+            {
+                AppendToLog("  中文释义：" + GameEngine.ChineseHint(currentWord), "meaning");
+                AppendToLog("  再按 " + ShortcutText((Keys)study.Settings.exampleHintKey)
+                    + " 提交答案。", "normal");
+            }
+            inputLine.Focus();
         }
 
         private void InputLineOnKeyDown(object sender, KeyEventArgs e)
         {
             if (e.KeyCode != Keys.Enter) return;
             e.SuppressKeyPress = true;
+            if (IsFreeExampleActive())
+            {
+                if (ExampleRevealFlow.HasTypedAnswer(inputLine.Text))
+                {
+                    exampleRevealStage = ExampleRevealFlow.LastRevealStage(
+                        study.Settings.exampleFirstLetterHints);
+                    SubmitAnswer();
+                }
+                return;
+            }
             SubmitAnswer();
         }
 
         private void SubmitAnswer()
         {
+            if (IsFreeExampleActive() && !ExampleRevealFlow.ReadyToSubmit(exampleRevealStage,
+                study.Settings.exampleFirstLetterHints)) return;
             string userInput = inputLine.Text.Trim();
             string action;
             if (keybindings.TryGetValue(userInput, out action))
@@ -1638,7 +2193,8 @@ namespace EnglishDictationTool
             AnswerOutcome outcome = engine.CheckAnswer(userInput);
             if (outcome.Correct)
             {
-                AppendToLog(appearance.Prompt("correct", currentWord, userInput), "correct");
+                AppendToLog(appearance.Prompt("correct", currentWord, userInput,
+                    outcome.CorrectAnswer), "correct");
                 if (outcome.MovedToErrorProne)
                     AppendToLog("  已达标，移入易错本。", "normal");
                 else if (engine.IsReviewMode)
@@ -1649,7 +2205,8 @@ namespace EnglishDictationTool
             }
             else
             {
-                AppendToLog(appearance.Prompt("error", currentWord, userInput), "error");
+                AppendToLog(appearance.Prompt("error", currentWord, userInput,
+                    outcome.CorrectAnswer), "error");
                 UpdateReviewButtonCount();
                 if (engine.RetryOnWrong)
                 {
@@ -1718,15 +2275,19 @@ namespace EnglishDictationTool
             int[] progress = engine.GetProgress();
             if (engine.QuestionMode == "example")
             {
-                string sentence = currentWord.examples ?? string.Empty;
-                string blanked = Regex.Replace(sentence, @"\[\[(.*?)\]\]", "________");
+                ExampleQuestion example = engine.GetExampleQuestion();
+                bool firstLetter = study.Settings.exampleFirstLetterHints;
+                string blanked = example == null ? string.Empty : example.Render(
+                    ExampleRevealFlow.ShowsFirstLetter(exampleRevealStage, firstLetter));
                 AppendToLog(string.Format("({0}/{1}) 例句填空:", progress[0], progress[1]), "normal");
                 AppendToLog("  " + blanked, "normal");
+                if (ExampleRevealFlow.ShowsMeaning(exampleRevealStage, firstLetter))
+                    AppendToLog("  中文释义：" + GameEngine.ChineseHint(currentWord), "meaning");
             }
             else
             {
                 AppendToLog(string.Format("({0}/{1}) 请输入:", progress[0], progress[1]), "normal");
-                AppendToLog("  " + ExtractChineseHint(currentWord.chinese), "normal");
+                AppendToLog("  " + ExtractChineseHint(currentWord), "normal");
             }
         }
 
@@ -1780,7 +2341,10 @@ namespace EnglishDictationTool
                 + "重新进入未完成列表时，会立即采用当前的题型设置。\n"
                 + "顶部“设置”可调整每日计划、词本、快捷键、外观和日历；“词书管理”可以导入外部 CSV 或重命名词书。\n"
                 + "学习窗口的“上一页”只用于回看；展示和答题阶段不能互相回退。\n"
-                + "默认采用深色背景，字体、提示文案和练习背景可在外观设置中修改。";
+                + "默认采用深色背景，字体、提示文案和练习背景可在外观设置中修改。\n\n"
+                + "项目与联系\n"
+                + "GitHub：https://github.com/kryptonite309/ZJU-English-dictation-tool_kry-advanced\n"
+                + "QQ 邮箱：1242532684@qq.com";
             ShowDarkDialog("帮助", help, true);
         }
 
@@ -1799,14 +2363,20 @@ namespace EnglishDictationTool
                 dialog.Font = Theme.UiFont;
                 dialog.ClientSize = large ? new Size(620, 470) : new Size(460, 190);
 
-                TextBox messageBox = new TextBox();
+                RichTextBox messageBox = new RichTextBox();
                 messageBox.Multiline = true;
                 messageBox.ReadOnly = true;
+                messageBox.DetectUrls = true;
                 messageBox.BorderStyle = BorderStyle.None;
                 messageBox.BackColor = Theme.Background;
                 messageBox.ForeColor = Theme.Text;
                 messageBox.Text = message;
-                messageBox.ScrollBars = large ? ScrollBars.Vertical : ScrollBars.None;
+                messageBox.ScrollBars = large ? RichTextBoxScrollBars.Vertical : RichTextBoxScrollBars.None;
+                messageBox.LinkClicked += delegate(object sender, LinkClickedEventArgs e)
+                {
+                    try { Process.Start(e.LinkText); }
+                    catch { }
+                };
                 messageBox.Location = new Point(22, 22);
                 messageBox.Size = new Size(dialog.ClientSize.Width - 44, dialog.ClientSize.Height - 82);
                 dialog.Controls.Add(messageBox);
@@ -1863,6 +2433,16 @@ namespace EnglishDictationTool
                     return StudyTests.Run(args[1], args[2]);
                 }
 
+                if (args.Length >= 2 && args[0] == "--audit-examples")
+                {
+                    return AuditExamples(args[1]);
+                }
+
+                if (args.Length >= 2 && args[0] == "--audit-parts-of-speech")
+                {
+                    return AuditPartsOfSpeech(args[1]);
+                }
+
                 if (args.Length >= 2 && args[0] == "--migrate")
                 {
                     return MigrateNotebooks(args[1]);
@@ -1873,7 +2453,7 @@ namespace EnglishDictationTool
 
                 if (args.Length >= 2 && args[0] == "--render-preview")
                 {
-                    return RenderPreview(args[1], args.Length >= 3 && args[2] == "bottom");
+                    return RenderPreview(args[1], args.Length >= 3 ? args[2] : null);
                 }
 
                 if (args.Length >= 2 && args[0] == "--render-main-settings")
@@ -1904,7 +2484,9 @@ namespace EnglishDictationTool
 
                 if (args.Length >= 2 && args[0] == "--render-study-session")
                 {
-                    return RenderStudySession(args[1]);
+                    int revealSteps = 0;
+                    if (args.Length >= 3) int.TryParse(args[2], out revealSteps);
+                    return RenderStudySession(args[1], revealSteps);
                 }
 
                 Application.Run(new MainForm());
@@ -1950,6 +2532,129 @@ namespace EnglishDictationTool
             };
             File.WriteAllText(outputFile, new JavaScriptSerializer().Serialize(report), new UTF8Encoding(false));
             return (bool)report["ok"] ? 0 : 2;
+        }
+
+        private static int AuditExamples(string outputFile)
+        {
+            string root = AppPaths.FindProjectRoot();
+            DataLoader loader = new DataLoader(Path.Combine(root, "data"));
+            int words = 0;
+            int rowsWithMarkers = 0;
+            int questions = 0;
+            int changedForms = 0;
+            List<string> invalid = new List<string>();
+            List<string> changedSamples = new List<string>();
+            foreach (string book in loader.GetAvailableBooks())
+            {
+                foreach (string unit in loader.GetUnitsForBook(book))
+                {
+                    foreach (WordEntry word in loader.LoadWordList(book, new[] { unit }))
+                    {
+                        words++;
+                        if (string.IsNullOrWhiteSpace(word.examples) || !word.examples.Contains("[[")) continue;
+                        rowsWithMarkers++;
+                        List<ExampleQuestion> found = ExampleCloze.Questions(word);
+                        questions += found.Count;
+                        if (found.Count == 0)
+                        {
+                            if (invalid.Count < 50) invalid.Add(book + "/" + unit + ": " + word.english);
+                            continue;
+                        }
+                        foreach (ExampleQuestion question in found)
+                        {
+                            if (string.IsNullOrWhiteSpace(question.answer)
+                                || string.IsNullOrWhiteSpace(question.prompt)
+                                || !question.prompt.Contains("________"))
+                            {
+                                if (invalid.Count < 50) invalid.Add(book + "/" + unit + ": " + word.english);
+                                continue;
+                            }
+                            if (!string.Equals(StudyStore.NormalizeAnswer(question.answer),
+                                StudyStore.NormalizeAnswer(GameEngine.CleanEnglish(word)),
+                                StringComparison.Ordinal))
+                            {
+                                changedForms++;
+                                if (changedSamples.Count < 50)
+                                    changedSamples.Add(word.english + " => " + question.answer);
+                            }
+                        }
+                    }
+                }
+            }
+            Dictionary<string, object> report = new Dictionary<string, object>
+            {
+                { "ok", invalid.Count == 0 }, { "words", words },
+                { "rowsWithMarkers", rowsWithMarkers }, { "validQuestions", questions },
+                { "changedForms", changedForms }, { "invalid", invalid },
+                { "changedSamples", changedSamples }
+            };
+            File.WriteAllText(outputFile, new JavaScriptSerializer().Serialize(report),
+                new UTF8Encoding(false));
+            return invalid.Count == 0 ? 0 : 3;
+        }
+
+        private static int AuditPartsOfSpeech(string outputFile)
+        {
+            string root = AppPaths.FindProjectRoot();
+            DataLoader loader = new DataLoader(Path.Combine(root, "data"));
+            List<WordEntry> rows = new List<WordEntry>();
+            foreach (string book in loader.GetAvailableBooks())
+            {
+                foreach (string unit in loader.GetUnitsForBook(book))
+                    rows.AddRange(loader.LoadWordList(book, new[] { unit }));
+            }
+
+            List<WordEntry> words = DataLoader.MergeWordEntries(rows);
+            List<string> missing = words
+                .Where(word => !PartOfSpeech.IsPhrase(word.english)
+                    && string.IsNullOrWhiteSpace(word.partOfSpeech))
+                .Select(word => word.english)
+                .OrderBy(value => value, StringComparer.OrdinalIgnoreCase)
+                .ToList();
+            List<string> phraseWithPart = words
+                .Where(word => PartOfSpeech.IsPhrase(word.english)
+                    && !string.IsNullOrWhiteSpace(word.partOfSpeech))
+                .Select(word => word.english + " => " + word.partOfSpeech)
+                .OrderBy(value => value, StringComparer.OrdinalIgnoreCase)
+                .ToList();
+            List<string> missingDisplayPrefix = words
+                .Where(word => !PartOfSpeech.IsPhrase(word.english)
+                    && !PartOfSpeech.HasLeadingTag(PartOfSpeech.DisplayChinese(word))
+                    && !PartOfSpeech.DisplayChinese(word).TrimStart().StartsWith(
+                        PartOfSpeech.DisplayPrefix(word), StringComparison.OrdinalIgnoreCase))
+                .Select(word => word.english + " => " + PartOfSpeech.DisplayChinese(word))
+                .OrderBy(value => value, StringComparer.OrdinalIgnoreCase)
+                .ToList();
+            List<string> samples = words
+                .Where(word => !PartOfSpeech.IsPhrase(word.english))
+                .Take(20)
+                .Select(word => word.english + " => " + PartOfSpeech.DisplayChinese(word))
+                .ToList();
+            WordEntry apple = words.FirstOrDefault(word => string.Equals(word.english,
+                "apple", StringComparison.OrdinalIgnoreCase));
+            if (apple != null) samples.Insert(0, apple.english + " => "
+                + PartOfSpeech.DisplayChinese(apple));
+
+            int phraseCount = words.Count(word => PartOfSpeech.IsPhrase(word.english));
+            int singleWordCount = words.Count - phraseCount;
+            Dictionary<string, object> report = new Dictionary<string, object>
+            {
+                { "ok", missing.Count == 0 && phraseWithPart.Count == 0
+                    && missingDisplayPrefix.Count == 0 },
+                { "projectRoot", root },
+                { "sourceRows", rows.Count },
+                { "uniqueEntries", words.Count },
+                { "singleWords", singleWordCount },
+                { "singleWordsWithPartOfSpeech", singleWordCount - missing.Count },
+                { "phrases", phraseCount },
+                { "missing", missing },
+                { "phrasesWithPartOfSpeech", phraseWithPart },
+                { "missingDisplayPrefix", missingDisplayPrefix },
+                { "samples", samples }
+            };
+            File.WriteAllText(outputFile, new JavaScriptSerializer().Serialize(report),
+                new UTF8Encoding(false));
+            return (bool)report["ok"] ? 0 : 4;
         }
 
         private static int InstallAfterExit(string targetFile, string processId, string reportFile)
@@ -2028,7 +2733,7 @@ namespace EnglishDictationTool
             return 0;
         }
 
-        private static int RenderPreview(string outputFile, bool bottom)
+        private static int RenderPreview(string outputFile, string mode)
         {
             using (MainForm form = new MainForm())
             {
@@ -2037,9 +2742,14 @@ namespace EnglishDictationTool
                 form.Location = new Point(-20000, -20000);
                 form.Show();
                 Application.DoEvents();
-                if (bottom)
+                if (mode == "bottom")
                 {
                     form.PrepareSettingsBottomPreview();
+                    Application.DoEvents();
+                }
+                else if (mode == "focus-end")
+                {
+                    form.FocusEndButtonPreview();
                     Application.DoEvents();
                 }
                 using (Bitmap image = new Bitmap(form.Width, form.Height))
@@ -2149,7 +2859,7 @@ namespace EnglishDictationTool
             return 0;
         }
 
-        private static int RenderStudySession(string outputFile)
+        private static int RenderStudySession(string outputFile, int revealSteps)
         {
             string root = AppPaths.FindProjectRoot();
             DataLoader loader = new DataLoader(Path.Combine(root, "data"));
@@ -2167,6 +2877,11 @@ namespace EnglishDictationTool
                 form.Location = new Point(-20000, -20000);
                 form.Show();
                 Application.DoEvents();
+                for (int step = 0; step < Math.Max(0, revealSteps); step++)
+                {
+                    form.RevealExampleForPreview();
+                    Application.DoEvents();
+                }
                 if (string.IsNullOrWhiteSpace(form.VisibleText))
                     throw new InvalidOperationException("每日学习窗口未呈现题目文字。");
                 using (Bitmap image = new Bitmap(form.Width, form.Height))

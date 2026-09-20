@@ -24,8 +24,9 @@ namespace EnglishDictationTool
         private readonly Dictionary<string, NumericUpDown> quotas = new Dictionary<string, NumericUpDown>();
         private NumericUpDown a, b, c, exampleTarget, spellingTarget, undoLimit, backupMinutes, backupKeep;
         private CheckBox random, fuzzy, newExample, newSpelling, listExample, listSpelling,
-            problemExample, problemSpelling, overlap, dueOnly, carryCount, carryPreview, firstLetter;
-        private TextBox days, previewKey, masteryKey, undoKey, backupKey;
+            problemExample, problemSpelling, overlap, dueOnly, carryCount, carryPreview,
+            exampleFirstLetter, reviewFirstLetter;
+        private TextBox days, previewKey, exampleHintKey, masteryKey, undoKey, backupKey;
         private TextBox speechReplayKey;
         private CheckBox speechEnabled, speechAutomatic;
         private ComboBox speechVoice;
@@ -202,14 +203,18 @@ namespace EnglishDictationTool
             problemSpelling = Check("错题/易错词复习：普通拼写", draft.problemSpelling);
             foreach (CheckBox item in new[] { newExample, newSpelling, listExample, listSpelling,
                 problemExample, problemSpelling }) page.Controls.Add(item);
+            exampleFirstLetter = Check("所有例句填空启用分阶段首字母提示（默认开启）",
+                draft.exampleFirstLetterHints);
+            page.Controls.Add(exampleFirstLetter);
+            page.Controls.Add(Label("例句题开始时不会直接显示提示；按提示键后显示首字母，再按一次显示中文，最后提交。关闭首字母后，第一次按键直接显示中文。", 1000));
             exampleTarget = Number(draft.exampleCorrectTarget, 0, 99);
             spellingTarget = Number(draft.spellingCorrectTarget, 0, 99);
             page.Controls.Add(Row("错题转易错：例句首次答对次数", exampleTarget, 320));
             page.Controls.Add(Row("错题转易错：拼写首次答对次数", spellingTarget, 320));
             fuzzy = Check("模糊作答：合并词库原文、斜线变体与手动可接受答案", draft.fuzzyAnswers);
-            firstLetter = Check("错题复习显示首字母", notebooks.ReviewFirstLetter);
+            reviewFirstLetter = Check("自由错题拼写直接显示首字母", notebooks.ReviewFirstLetter);
             dueOnly = Check("仅从达到下方间隔天数的错题/易错词中抽取（默认关闭）", draft.reviewDueOnly);
-            page.Controls.Add(fuzzy); page.Controls.Add(firstLetter); page.Controls.Add(dueOnly);
+            page.Controls.Add(fuzzy); page.Controls.Add(reviewFirstLetter); page.Controls.Add(dueOnly);
             days = new TextBox { Width = 400, Text = string.Join(",", draft.reviewDays ?? new[] { 1, 3, 7, 14 }) };
             page.Controls.Add(Row("复习间隔天数（逗号分隔）", days, 320));
             page.Controls.Add(Button("管理可接受答案", delegate { new AcceptedAnswersForm(store, loader).ShowDialog(this); }));
@@ -220,7 +225,7 @@ namespace EnglishDictationTool
         private void BuildLibraryTab(TabControl tabs)
         {
             FlowLayoutPanel page = Page(tabs, "词书管理");
-            page.Controls.Add(Label("可以把外部 CSV 导入现有词书或新建词书，也可以重命名整个词书。导入文件必须包含 english、chinese 两列，可另加 examples 列。", 1000));
+            page.Controls.Add(Label("可以把外部 CSV 导入现有词书或新建词书，也可以重命名整个词书。导入文件必须包含 english、chinese 两列，可另加 examples 和 part_of_speech（或 pos）列。", 1000));
             managedBook = new DarkComboBox { Width = 360 };
             managedBook.SelectedIndexChanged += delegate
             {
@@ -365,10 +370,12 @@ namespace EnglishDictationTool
             FlowLayoutPanel page = Page(tabs, "快捷键");
             page.Controls.Add(Label("点击快捷键框后直接按键。冲突的组合不允许保存。", 800));
             previewKey = Shortcut(draft.previewKey, true);
+            exampleHintKey = Shortcut(draft.exampleHintKey, true);
             masteryKey = Shortcut((int)notebooks.MasteryShortcut, false);
             undoKey = Shortcut(draft.undoKey, false);
             backupKey = Shortcut(draft.manualBackupKey, false);
             page.Controls.Add(Row("展示下一层", previewKey, 320));
+            page.Controls.Add(Row("例句提示 / 提交（默认 Enter）", exampleHintKey, 320));
             page.Controls.Add(Row("斩当前词", masteryKey, 320));
             page.Controls.Add(Row("撤销上一个词", undoKey, 320));
             page.Controls.Add(Row("手动备份", backupKey, 320));
@@ -434,9 +441,15 @@ namespace EnglishDictationTool
         {
             try
             {
-                int[] keys = { (int)previewKey.Tag, (int)masteryKey.Tag,
-                    (int)undoKey.Tag, (int)backupKey.Tag, (int)speechReplayKey.Tag };
-                if (keys.Distinct().Count() != keys.Length)
+                int previewValue = (int)previewKey.Tag;
+                int exampleValue = (int)exampleHintKey.Tag;
+                int masteryValue = (int)masteryKey.Tag;
+                int undoValue = (int)undoKey.Tag;
+                int backupValue = (int)backupKey.Tag;
+                int speechValue = (int)speechReplayKey.Tag;
+                int[] exclusiveKeys = { masteryValue, undoValue, backupValue, speechValue };
+                if (exclusiveKeys.Distinct().Count() != exclusiveKeys.Length
+                    || exclusiveKeys.Contains(previewValue) || exclusiveKeys.Contains(exampleValue))
                     throw new InvalidOperationException("快捷键有冲突，请为不同操作设置不同的按键。");
                 int[] intervals = days.Text.Split(new[] { ',', '，', ';', '；' },
                     StringSplitOptions.RemoveEmptyEntries).Select(x => int.Parse(x.Trim())).ToArray();
@@ -450,18 +463,20 @@ namespace EnglishDictationTool
                 draft.newExample = newExample.Checked; draft.newSpelling = newSpelling.Checked;
                 draft.listExample = listExample.Checked; draft.listSpelling = listSpelling.Checked;
                 draft.problemExample = problemExample.Checked; draft.problemSpelling = problemSpelling.Checked;
+                draft.exampleFirstLetterHints = exampleFirstLetter.Checked;
                 draft.exampleCorrectTarget = (int)exampleTarget.Value;
                 draft.spellingCorrectTarget = (int)spellingTarget.Value;
                 draft.fuzzyAnswers = fuzzy.Checked; draft.reviewDays = intervals;
                 draft.reviewDueOnly = dueOnly.Checked;
-                draft.previewKey = keys[0]; draft.undoKey = keys[2]; draft.manualBackupKey = keys[3];
+                draft.previewKey = previewValue; draft.exampleHintKey = exampleValue;
+                draft.undoKey = undoValue; draft.manualBackupKey = backupValue;
                 draft.undoLimit = (int)undoLimit.Value;
                 draft.autoBackupMinutes = (int)backupMinutes.Value;
                 draft.autoBackupKeep = (int)backupKeep.Value;
                 draft.defaultBookCounts = quotas.ToDictionary(x => x.Key, x => (int)x.Value.Value);
                 store.UpdateSettings(draft);
-                notebooks.MasteryShortcut = (Keys)keys[1];
-                notebooks.ReviewFirstLetter = firstLetter.Checked;
+                notebooks.MasteryShortcut = (Keys)masteryValue;
+                notebooks.ReviewFirstLetter = reviewFirstLetter.Checked;
                 if (draft.spellingCorrectTarget > 0) notebooks.ReviewCorrectTarget = draft.spellingCorrectTarget;
                 CollectPronunciation();
                 pronunciation.Save(pronunciationDraft);

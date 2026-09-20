@@ -55,6 +55,7 @@ namespace EnglishDictationTool
         public bool Correct { get; set; }
         public bool MovedToErrorProne { get; set; }
         public int CorrectCount { get; set; }
+        public string CorrectAnswer { get; set; }
     }
 
     internal sealed class NotebookStore
@@ -62,17 +63,22 @@ namespace EnglishDictationTool
         private readonly string statePath;
         private readonly string legacyWrongPath;
         private readonly string migrationBackupPath;
+        private readonly string projectRoot;
         private NotebookState state;
 
         public event EventHandler Changed;
 
         public NotebookStore(string projectRoot)
         {
+            this.projectRoot = projectRoot;
             statePath = Path.Combine(projectRoot, "notebook_state.json");
             legacyWrongPath = Path.Combine(projectRoot, "wrong_words.json");
             migrationBackupPath = Path.Combine(projectRoot, "wrong_words.pre-migration.json");
             if (File.Exists(statePath)) Load();
             else MigrateLegacyWrongWords();
+            bool changed = ConsolidateDuplicateWords();
+            if (EnrichPartsOfSpeech()) changed = true;
+            if (changed) Save();
         }
 
         public bool ReviewFirstLetter
@@ -157,6 +163,8 @@ namespace EnglishDictationTool
             NotebookState restored = new JavaScriptSerializer().Deserialize<NotebookState>(json);
             Validate(restored);
             state = restored;
+            ConsolidateDuplicateWords();
+            EnrichPartsOfSpeech();
             Save();
         }
 
@@ -170,6 +178,7 @@ namespace EnglishDictationTool
                 record = new NotebookRecord { word = word, notebook = Notebooks.None };
                 state.records.Add(record);
             }
+            else record.word = DataLoader.MergeWordEntry(new[] { record.word, word });
             record.lastAnsweredAt = answeredAt;
             if (!correct)
             {
@@ -201,6 +210,7 @@ namespace EnglishDictationTool
         {
             AnswerOutcome outcome = new AnswerOutcome { Correct = correct };
             NotebookRecord record = FindRecord(word);
+            if (record != null) record.word = DataLoader.MergeWordEntry(new[] { record.word, word });
 
             if (correct)
             {
@@ -270,6 +280,7 @@ namespace EnglishDictationTool
                     record = new NotebookRecord { word = word };
                     state.records.Add(record);
                 }
+                else record.word = DataLoader.MergeWordEntry(new[] { record.word, word });
                 if (record.notebook != notebook) record.correctCount = 0;
                 if (record.notebook != notebook)
                 {
@@ -291,14 +302,113 @@ namespace EnglishDictationTool
 
         private NotebookRecord FindRecord(WordEntry word)
         {
-            return word == null ? null : state.records.FirstOrDefault(item => item.word.Equals(word));
+            string key = DataLoader.WordKey(word);
+            return key.Length == 0 ? null : state.records.FirstOrDefault(item =>
+                DataLoader.WordKey(item.word) == key);
         }
 
         private void AddRecent(WordEntry word)
         {
-            state.recent.RemoveAll(item => item.Equals(word));
-            state.recent.Insert(0, word);
+            string key = DataLoader.WordKey(word);
+            state.recent.RemoveAll(item => DataLoader.WordKey(item) == key);
+            NotebookRecord record = FindRecord(word);
+            state.recent.Insert(0, record == null ? word : record.word);
             if (state.recent.Count > 5) state.recent.RemoveRange(5, state.recent.Count - 5);
+        }
+
+        private bool ConsolidateDuplicateWords()
+        {
+            bool changed = false;
+            List<NotebookRecord> merged = new List<NotebookRecord>();
+            Dictionary<string, NotebookRecord> byEnglish = new Dictionary<string, NotebookRecord>(
+                StringComparer.OrdinalIgnoreCase);
+            foreach (NotebookRecord source in state.records)
+            {
+                string key = DataLoader.WordKey(source.word);
+                NotebookRecord target;
+                if (!byEnglish.TryGetValue(key, out target))
+                {
+                    target = new NotebookRecord
+                    {
+                        word = DataLoader.MergeWordEntry(new[] { source.word }),
+                        notebook = source.notebook,
+                        correctCount = source.correctCount,
+                        exampleCorrectCount = source.exampleCorrectCount,
+                        spellingCorrectCount = source.spellingCorrectCount,
+                        errorCount = source.errorCount,
+                        lastAnsweredAt = source.lastAnsweredAt
+                    };
+                    byEnglish[key] = target;
+                    merged.Add(target);
+                    continue;
+                }
+                changed = true;
+                target.word = DataLoader.MergeWordEntry(new[] { target.word, source.word });
+                if (NotebookPriority(source.notebook) > NotebookPriority(target.notebook))
+                    target.notebook = source.notebook;
+                target.correctCount = Math.Max(target.correctCount, source.correctCount);
+                target.exampleCorrectCount = Math.Max(target.exampleCorrectCount, source.exampleCorrectCount);
+                target.spellingCorrectCount = Math.Max(target.spellingCorrectCount, source.spellingCorrectCount);
+                target.errorCount += source.errorCount;
+                if (source.lastAnsweredAt > target.lastAnsweredAt) target.lastAnsweredAt = source.lastAnsweredAt;
+            }
+            state.records = merged;
+
+            List<WordEntry> recent = new List<WordEntry>();
+            foreach (WordEntry word in state.recent.Where(x => x != null))
+            {
+                string key = DataLoader.WordKey(word);
+                int existing = recent.FindIndex(x => DataLoader.WordKey(x) == key);
+                if (existing < 0) recent.Add(word);
+                else
+                {
+                    recent[existing] = DataLoader.MergeWordEntry(new[] { recent[existing], word });
+                    changed = true;
+                }
+            }
+            state.recent = recent.Take(5).ToList();
+            return changed;
+        }
+
+        private bool EnrichPartsOfSpeech()
+        {
+            string data = Path.Combine(projectRoot, "data");
+            if (!Directory.Exists(data)) return false;
+            DataLoader loader = new DataLoader(data);
+            Dictionary<string, string> parts = new Dictionary<string, string>(
+                StringComparer.OrdinalIgnoreCase);
+            foreach (string book in loader.GetAvailableBooks())
+                foreach (string unit in loader.GetUnitsForBook(book))
+                    foreach (WordEntry word in loader.LoadWordList(book, new[] { unit }))
+                    {
+                        string key = DataLoader.WordKey(word);
+                        string existing;
+                        parts.TryGetValue(key, out existing);
+                        parts[key] = PartOfSpeech.Merge(existing, word.partOfSpeech);
+                    }
+
+            bool changed = false;
+            foreach (WordEntry word in state.records.Select(x => x.word)
+                .Concat(state.recent).Where(x => x != null))
+            {
+                string incoming;
+                if (!parts.TryGetValue(DataLoader.WordKey(word), out incoming)) continue;
+                string merged = PartOfSpeech.IsPhrase(word.english)
+                    ? string.Empty : PartOfSpeech.Merge(word.partOfSpeech, incoming);
+                if (string.Equals(word.partOfSpeech ?? string.Empty, merged,
+                    StringComparison.Ordinal)) continue;
+                word.partOfSpeech = merged;
+                changed = true;
+            }
+            return changed;
+        }
+
+        private static int NotebookPriority(string notebook)
+        {
+            if (notebook == Notebooks.Mastered) return 3;
+            if (notebook == Notebooks.ErrorProne) return 2;
+            if (notebook == Notebooks.Wrong) return 1;
+            return 0;
         }
 
         private static NotebookState NewState()
@@ -345,7 +455,7 @@ namespace EnglishDictationTool
             NotebookState loaded = new JavaScriptSerializer().Deserialize<NotebookState>(json);
             Validate(loaded);
             state = loaded;
-            state.recent = state.recent.Where(item => item != null).Distinct().Take(5).ToList();
+            state.recent = state.recent.Where(item => item != null).Take(5).ToList();
         }
 
         private static void Validate(NotebookState loaded)

@@ -53,7 +53,15 @@ namespace EnglishDictationTool
             UseVisualStyleBackColor = false;
             SetStyle(ControlStyles.UserPaint | ControlStyles.AllPaintingInWmPaint |
                 ControlStyles.OptimizedDoubleBuffer, true);
+            SetStyle(ControlStyles.Selectable, false);
+            TabStop = false;
             Cursor = Cursors.Hand;
+            UpdateRoundedRegion();
+        }
+
+        public override void NotifyDefault(bool value)
+        {
+            base.NotifyDefault(false);
         }
 
         protected override void OnMouseEnter(EventArgs e) { hovered = true; Invalidate(); base.OnMouseEnter(e); }
@@ -62,13 +70,48 @@ namespace EnglishDictationTool
         protected override void OnMouseUp(MouseEventArgs e) { pressed = false; Invalidate(); base.OnMouseUp(e); }
         protected override void OnEnabledChanged(EventArgs e) { Invalidate(); base.OnEnabledChanged(e); }
 
+        protected override void OnSizeChanged(EventArgs e)
+        {
+            base.OnSizeChanged(e);
+            UpdateRoundedRegion();
+        }
+
+        protected override void OnParentChanged(EventArgs e)
+        {
+            base.OnParentChanged(e);
+            Invalidate();
+        }
+
+        private void UpdateRoundedRegion()
+        {
+            if (Width < 2 || Height < 2) return;
+            Region previous = Region;
+            using (GraphicsPath path = ModernUI.Round(new Rectangle(0, 0, Width, Height), 11))
+                Region = new Region(path);
+            if (previous != null) previous.Dispose();
+        }
+
+        private Color BackdropColor()
+        {
+            for (Control ancestor = Parent; ancestor != null; ancestor = ancestor.Parent)
+            {
+                if (ancestor is ModernCard || ancestor is ModernGroupBox) return ModernUI.Card;
+                if (ancestor.BackColor.A == 255) return ancestor.BackColor;
+            }
+            return Theme.Background;
+        }
+
         protected override void OnPaintBackground(PaintEventArgs e)
         {
-            e.Graphics.Clear(Parent == null ? Theme.Background : Parent.BackColor);
+            e.Graphics.Clear(BackdropColor());
         }
 
         protected override void OnPaint(PaintEventArgs e)
         {
+            // ButtonBase can leave its rectangular native surface visible around a custom
+            // rounded path. Clear it here as well as in OnPaintBackground, then constrain
+            // the actual control window with Region so the corners always belong to the parent.
+            e.Graphics.Clear(BackdropColor());
             e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
             Rectangle rect = new Rectangle(1, 1, Math.Max(1, Width - 3), Math.Max(1, Height - 3));
             Color fill = primary ? ModernUI.Accent : subtle ? ModernUI.Card : ModernUI.CardRaised;
@@ -82,11 +125,10 @@ namespace EnglishDictationTool
                     e.Graphics.DrawPath(border, path);
             }
             Color ink = !Enabled ? Theme.MutedText : primary ? Color.FromArgb(19, 17, 30) : Theme.Text;
-            TextRenderer.DrawText(e.Graphics, Text, Font, rect, ink,
+            Rectangle textRect = Rectangle.Inflate(rect, -10, -3);
+            TextRenderer.DrawText(e.Graphics, Text, Font, textRect, ink,
                 TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter |
                 TextFormatFlags.EndEllipsis);
-            if (Focused && ShowFocusCues)
-                ControlPaint.DrawFocusRectangle(e.Graphics, Rectangle.Inflate(rect, -5, -5), ink, fill);
         }
     }
 
