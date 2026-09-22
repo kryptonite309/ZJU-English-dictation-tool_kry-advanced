@@ -12,6 +12,22 @@ namespace EnglishDictationTool
         public static readonly Color Card = Color.FromArgb(25, 30, 37);
         public static readonly Color CardRaised = Color.FromArgb(32, 39, 49);
 
+        public static void ApplyAppIcon(Form form)
+        {
+            if (form == null) return;
+            try
+            {
+                using (Icon executableIcon = Icon.ExtractAssociatedIcon(Application.ExecutablePath))
+                {
+                    if (executableIcon != null) form.Icon = (Icon)executableIcon.Clone();
+                }
+            }
+            catch
+            {
+                // A missing shell icon must never prevent a study window from opening.
+            }
+        }
+
         public static Size FitWindow(int width, int height)
         {
             Rectangle available = Screen.FromPoint(Cursor.Position).WorkingArea;
@@ -129,6 +145,69 @@ namespace EnglishDictationTool
             TextRenderer.DrawText(e.Graphics, Text, Font, textRect, ink,
                 TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter |
                 TextFormatFlags.EndEllipsis);
+        }
+    }
+
+    internal sealed class ModernProgressBar : Control
+    {
+        private int completed;
+        private int total;
+
+        public int Completed
+        {
+            get { return completed; }
+            set { completed = Math.Max(0, value); Invalidate(); }
+        }
+
+        public int Total
+        {
+            get { return total; }
+            set { total = Math.Max(0, value); Invalidate(); }
+        }
+
+        public ModernProgressBar()
+        {
+            Height = 34;
+            BackColor = Theme.Background;
+            ForeColor = Theme.Text;
+            Font = new Font("Microsoft YaHei UI", 9.5f, FontStyle.Bold);
+            SetStyle(ControlStyles.UserPaint | ControlStyles.AllPaintingInWmPaint |
+                ControlStyles.OptimizedDoubleBuffer, true);
+        }
+
+        protected override void OnPaint(PaintEventArgs e)
+        {
+            e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
+            e.Graphics.Clear(Parent == null ? Theme.Background : Parent.BackColor);
+            Rectangle track = new Rectangle(1, 3, Math.Max(1, Width - 3), Math.Max(1, Height - 7));
+            using (GraphicsPath path = ModernUI.Round(track, 10))
+            {
+                using (Brush brush = new SolidBrush(ModernUI.CardRaised))
+                    e.Graphics.FillPath(brush, path);
+                using (Pen border = new Pen(Theme.Border)) e.Graphics.DrawPath(border, path);
+            }
+            int safeTotal = Math.Max(0, total);
+            int safeCompleted = Math.Min(Math.Max(0, completed), safeTotal);
+            int percent = safeTotal == 0 ? 100 : safeCompleted * 100 / safeTotal;
+            int fillWidth = safeTotal == 0 ? track.Width
+                : (int)Math.Round(track.Width * (safeCompleted / (double)safeTotal));
+            if (fillWidth > 0)
+            {
+                Rectangle fill = new Rectangle(track.Left, track.Top,
+                    Math.Min(track.Width, Math.Max(1, fillWidth)), track.Height);
+                using (GraphicsPath path = ModernUI.Round(track, 10))
+                using (Brush brush = new SolidBrush(ModernUI.Accent))
+                {
+                    GraphicsState state = e.Graphics.Save();
+                    e.Graphics.SetClip(path);
+                    e.Graphics.FillRectangle(brush, fill);
+                    e.Graphics.Restore(state);
+                }
+            }
+            string label = safeCompleted + " / " + safeTotal + "  ·  " + percent + "%";
+            TextRenderer.DrawText(e.Graphics, label, Font, track, Theme.Text,
+                TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter |
+                TextFormatFlags.SingleLine);
         }
     }
 

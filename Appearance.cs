@@ -25,6 +25,7 @@ namespace EnglishDictationTool
         public string image { get; set; }
         public string fit { get; set; }
         public int shade { get; set; }
+        public bool inherit { get; set; }
     }
 
     internal sealed class AppearanceSettings
@@ -48,6 +49,13 @@ namespace EnglishDictationTool
             foreach (string key in new[] { "free", "new", "list_review", "problem_review", "calendar" })
                 settings.backgrounds[key] = new BackgroundAppearance
                 { color = Color.FromArgb(12, 12, 12).ToArgb(), image = "", fit = "cover", shade = 35 };
+            settings.backgrounds["pause"] = new BackgroundAppearance
+                { color = Color.FromArgb(18, 22, 30).ToArgb(), image = "", fit = "cover", shade = 42 };
+            foreach (string key in new[] { "pause_new", "pause_list_review",
+                "pause_problem_review", "pause_free" })
+                settings.backgrounds[key] = new BackgroundAppearance
+                { color = Color.FromArgb(18, 22, 30).ToArgb(), image = "", fit = "cover",
+                    shade = 42, inherit = true };
             settings.prompts = new Dictionary<string, string>();
             settings.prompts["correct"] = "✓ 正确：{answer}";
             settings.prompts["error"] = "✗ 错误；正确答案：{answer}";
@@ -172,7 +180,8 @@ namespace EnglishDictationTool
                 if (!settings.backgrounds.ContainsKey(entry.Key) || settings.backgrounds[entry.Key] == null)
                     settings.backgrounds[entry.Key] = entry.Value;
                 BackgroundAppearance background = settings.backgrounds[entry.Key];
-                if (background.fit != "contain" && background.fit != "stretch") background.fit = "cover";
+                if (background.fit != "contain" && background.fit != "stretch"
+                    && background.fit != "center") background.fit = "cover";
                 background.shade = Math.Max(0, Math.Min(90, background.shade));
             }
             foreach (KeyValuePair<string, string> entry in defaults.prompts)
@@ -295,7 +304,13 @@ namespace EnglishDictationTool
                 e.Graphics.FillRectangle(fill, ClientRectangle);
             if (backgroundImage == null) return;
             Rectangle target = ClientRectangle;
-            if (background.fit != "stretch")
+            if (background.fit == "center")
+            {
+                target = new Rectangle((Width - backgroundImage.Width) / 2,
+                    (Height - backgroundImage.Height) / 2,
+                    backgroundImage.Width, backgroundImage.Height);
+            }
+            else if (background.fit != "stretch")
             {
                 float scale = background.fit == "contain"
                     ? Math.Min((float)Width / backgroundImage.Width, (float)Height / backgroundImage.Height)

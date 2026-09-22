@@ -427,3 +427,21 @@ FodyWeavers.xsd
 *.msix
 *.msm
 *.msp
+
+# 大英默写器本地学习数据与构建产物
+main.exe
+study_state.json
+notebook_state.json
+wrong_words.json
+wrong_words.pre-migration.json
+keybindings.json
+appearance.json
+pronunciation.json
+study_lists/
+backups/
+appearance_images/
+_build*/
+_qa*/
+_compat*/
+_upgrade_backups/
+github-upload*/

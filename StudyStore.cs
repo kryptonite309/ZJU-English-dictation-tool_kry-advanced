@@ -15,24 +15,47 @@ namespace EnglishDictationTool
         public bool randomExtraction { get; set; }
         public bool fuzzyAnswers { get; set; }
         public bool newExample { get; set; }
+        public bool newDictation { get; set; }
         public bool newSpelling { get; set; }
         public bool listExample { get; set; }
+        public bool listDictation { get; set; }
         public bool listSpelling { get; set; }
         public bool problemExample { get; set; }
+        public bool problemDictation { get; set; }
         public bool problemSpelling { get; set; }
+        public bool freeExample { get; set; }
+        public bool freeDictation { get; set; }
+        public bool freeSpelling { get; set; }
+        public List<string> newTaskOrder { get; set; }
+        public List<string> listTaskOrder { get; set; }
+        public List<string> problemTaskOrder { get; set; }
+        public List<string> freeTaskOrder { get; set; }
+        public string newQuestionOrder { get; set; }
+        public string listQuestionOrder { get; set; }
+        public string problemQuestionOrder { get; set; }
+        public string freeQuestionOrder { get; set; }
         public bool exampleFirstLetterHints { get; set; }
+        public bool dictationMeaningHint { get; set; }
         public bool allowOverlap { get; set; }
         public bool reviewDueOnly { get; set; }
         public bool carryOverCountsInNewCount { get; set; }
         public bool carryOverPreview { get; set; }
         public int exampleCorrectTarget { get; set; }
+        public int dictationCorrectTarget { get; set; }
         public int spellingCorrectTarget { get; set; }
+        public bool backupBeforeManualEnd { get; set; }
+        public bool timerEnabled { get; set; }
+        public string timerPrecision { get; set; }
+        public int pauseKey { get; set; }
+        public bool checkUpdatesOnStartup { get; set; }
         public int undoLimit { get; set; }
         public int autoBackupMinutes { get; set; }
         public int autoBackupKeep { get; set; }
         public int[] reviewDays { get; set; }
         public int previewKey { get; set; }
         public int exampleHintKey { get; set; }
+        public int previousPageKey { get; set; }
+        public int nextPageKey { get; set; }
         public int undoKey { get; set; }
         public int manualBackupKey { get; set; }
         public Dictionary<string, int> defaultBookCounts { get; set; }
@@ -43,21 +66,38 @@ namespace EnglishDictationTool
             {
                 newCount = 20, listCount = 4, problemCount = 15,
                 randomExtraction = false, fuzzyAnswers = false,
-                newExample = false, newSpelling = true,
-                listExample = false, listSpelling = true,
-                problemExample = false, problemSpelling = true,
+                newExample = false, newDictation = false, newSpelling = true,
+                listExample = false, listDictation = false, listSpelling = true,
+                problemExample = false, problemDictation = false, problemSpelling = true,
+                freeExample = false, freeDictation = false, freeSpelling = true,
+                newTaskOrder = DefaultTaskOrder(), listTaskOrder = DefaultTaskOrder(),
+                problemTaskOrder = DefaultTaskOrder(), freeTaskOrder = DefaultTaskOrder(),
+                newQuestionOrder = "sequential", listQuestionOrder = "sequential",
+                problemQuestionOrder = "sequential", freeQuestionOrder = "sequential",
                 exampleFirstLetterHints = true,
+                dictationMeaningHint = true,
                 allowOverlap = true, reviewDueOnly = false, carryOverCountsInNewCount = true,
                 carryOverPreview = true,
-                exampleCorrectTarget = 0, spellingCorrectTarget = 3,
+                exampleCorrectTarget = 0, dictationCorrectTarget = 0, spellingCorrectTarget = 3,
+                backupBeforeManualEnd = true, timerEnabled = true, timerPrecision = "minute",
+                pauseKey = (int)(System.Windows.Forms.Keys.Control | System.Windows.Forms.Keys.Shift
+                    | System.Windows.Forms.Keys.P),
+                checkUpdatesOnStartup = true,
                 undoLimit = 5, autoBackupMinutes = 10, autoBackupKeep = 6,
                 reviewDays = new[] { 1, 3, 7, 14 },
                 previewKey = (int)System.Windows.Forms.Keys.Enter,
                 exampleHintKey = (int)System.Windows.Forms.Keys.Enter,
+                previousPageKey = (int)(System.Windows.Forms.Keys.Shift | System.Windows.Forms.Keys.Q),
+                nextPageKey = (int)(System.Windows.Forms.Keys.Shift | System.Windows.Forms.Keys.E),
                 undoKey = (int)(System.Windows.Forms.Keys.Control | System.Windows.Forms.Keys.Z),
                 manualBackupKey = (int)(System.Windows.Forms.Keys.Control | System.Windows.Forms.Keys.Shift | System.Windows.Forms.Keys.B),
                 defaultBookCounts = new Dictionary<string, int>()
             };
+        }
+
+        private static List<string> DefaultTaskOrder()
+        {
+            return new List<string> { "example", "dictation", "spelling" };
         }
     }
 
@@ -74,9 +114,12 @@ namespace EnglishDictationTool
     internal sealed class StudyItem
     {
         public WordEntry word { get; set; }
+        public string sourceBook { get; set; }
+        public string sourceUnit { get; set; }
         public bool released { get; set; }
         public bool mastered { get; set; }
         public bool exampleComplete { get; set; }
+        public bool dictationComplete { get; set; }
         public bool spellingComplete { get; set; }
         public DateTime firstAnsweredAt { get; set; }
         public bool carriedOver { get; set; }
@@ -115,6 +158,13 @@ namespace EnglishDictationTool
         public int taskCursor { get; set; }
         public List<StudyTask> retries { get; set; }
         public List<StudyTask> history { get; set; }
+        public int questionOrderSeed { get; set; }
+        public bool paused { get; set; }
+        public string pausedInput { get; set; }
+        public int pausedRevealStage { get; set; }
+        public int pausedPreviewReviewIndex { get; set; }
+        public int pausedQuizReviewIndex { get; set; }
+        public long activeMilliseconds { get; set; }
     }
 
     internal sealed class StudyUndo
@@ -131,6 +181,20 @@ namespace EnglishDictationTool
         public string kind { get; set; }
         public int kept { get; set; }
         public int released { get; set; }
+    }
+
+    internal sealed class StudyProgress
+    {
+        public int completed { get; set; }
+        public int total { get; set; }
+        public int percent
+        {
+            get
+            {
+                if (total <= 0) return 100;
+                return Math.Max(0, Math.Min(100, completed * 100 / total));
+            }
+        }
     }
 
     internal sealed class StudyState
@@ -151,6 +215,7 @@ namespace EnglishDictationTool
         private readonly DataLoader loader;
         private readonly NotebookStore notebooks;
         private readonly Random random = new Random();
+        private readonly HashSet<string> temporarilyDisabledDictation = new HashSet<string>();
         private Dictionary<string, string> vocabularyPartsOfSpeech;
         private StudyState state;
         public event EventHandler Changed;
@@ -173,10 +238,39 @@ namespace EnglishDictationTool
                     state.settings.exampleFirstLetterHints = true;
                 if (state.settings.exampleHintKey == 0)
                     state.settings.exampleHintKey = (int)System.Windows.Forms.Keys.Enter;
+                if (state.settings.previousPageKey == 0)
+                    state.settings.previousPageKey = (int)(System.Windows.Forms.Keys.Shift
+                        | System.Windows.Forms.Keys.Q);
+                if (state.settings.nextPageKey == 0)
+                    state.settings.nextPageKey = (int)(System.Windows.Forms.Keys.Shift
+                        | System.Windows.Forms.Keys.E);
+                if (stateJson.IndexOf("\"dictationMeaningHint\"", StringComparison.Ordinal) < 0)
+                    state.settings.dictationMeaningHint = true;
+                if (stateJson.IndexOf("\"freeSpelling\"", StringComparison.Ordinal) < 0)
+                    state.settings.freeSpelling = true;
+                if (stateJson.IndexOf("\"backupBeforeManualEnd\"", StringComparison.Ordinal) < 0)
+                    state.settings.backupBeforeManualEnd = true;
+                if (stateJson.IndexOf("\"timerEnabled\"", StringComparison.Ordinal) < 0)
+                    state.settings.timerEnabled = true;
+                if (stateJson.IndexOf("\"checkUpdatesOnStartup\"", StringComparison.Ordinal) < 0)
+                    state.settings.checkUpdatesOnStartup = true;
+                if (state.settings.pauseKey == 0)
+                    state.settings.pauseKey = (int)(System.Windows.Forms.Keys.Control
+                        | System.Windows.Forms.Keys.Shift | System.Windows.Forms.Keys.P);
+                NormalizeSettings(state.settings);
                 legacyTaskCounts = stateJson.IndexOf("\"notebookCounted\"",
                     StringComparison.Ordinal) < 0;
                 foreach (StudyList list in state.lists)
                 {
+                    if (list.items == null) list.items = new List<StudyItem>();
+                    if (list.tasks == null) list.tasks = new List<StudyTask>();
+                    if (list.retries == null) list.retries = new List<StudyTask>();
+                    if (list.sourceListIds == null) list.sourceListIds = new List<string>();
+                    if (list.questionOrderSeed == 0) list.questionOrderSeed = StableHash(list.id);
+                    if (stateJson.IndexOf("\"pausedPreviewReviewIndex\"", StringComparison.Ordinal) < 0)
+                        list.pausedPreviewReviewIndex = -1;
+                    if (stateJson.IndexOf("\"pausedQuizReviewIndex\"", StringComparison.Ordinal) < 0)
+                        list.pausedQuizReviewIndex = -1;
                     if (list.history != null) continue;
                     list.history = new List<StudyTask>();
                     if (list.tasks != null)
@@ -192,6 +286,7 @@ namespace EnglishDictationTool
                     words = new List<StudyWord>(), lists = new List<StudyList>(),
                     priorityWords = new List<WordEntry>(), undo = new List<StudyUndo>()
                 };
+                NormalizeSettings(state.settings);
                 Save();
             }
             if (legacyTaskCounts) MarkExistingHistoryCounted(state);
@@ -201,6 +296,18 @@ namespace EnglishDictationTool
                     && x.phase == "quiz")) RebuildPendingTasks(list);
                 Save();
             }
+            bool filledSources = false;
+            foreach (StudyList list in state.lists)
+                foreach (StudyItem item in list.items ?? new List<StudyItem>())
+                {
+                    if (!string.IsNullOrWhiteSpace(item.sourceBook)) continue;
+                    StudyWord source = FindWord(item.word);
+                    if (source == null) continue;
+                    item.sourceBook = source.book;
+                    item.sourceUnit = source.unit;
+                    filledSources = true;
+                }
+            if (filledSources) Save();
             SettleCrossDay(DateTime.Now);
         }
 
@@ -414,9 +521,62 @@ namespace EnglishDictationTool
         public void UpdateSettings(StudySettings settings)
         {
             StudySettings previous = state.settings;
+            Dictionary<string, bool> rebuild = new Dictionary<string, bool>
+            {
+                { "new", TaskSettingsSignature(previous, "new") != TaskSettingsSignature(settings, "new") },
+                { "list_review", TaskSettingsSignature(previous, "list_review") != TaskSettingsSignature(settings, "list_review") },
+                { "problem_review", TaskSettingsSignature(previous, "problem_review") != TaskSettingsSignature(settings, "problem_review") }
+            };
             state.settings = settings;
-            try { SaveSettings(); }
+            try
+            {
+                SaveSettings();
+                foreach (KeyValuePair<string, bool> changed in rebuild.Where(x => x.Value))
+                {
+                    StudyList list = ActiveFor(changed.Key);
+                    if (list == null || list.phase != "quiz") continue;
+                    StudyTask before = list.tasks != null && list.taskCursor >= 0
+                        && list.taskCursor < list.tasks.Count ? list.tasks[list.taskCursor] : null;
+                    RebuildPendingTasks(list);
+                    StudyTask after = list.tasks != null && list.taskCursor >= 0
+                        && list.taskCursor < list.tasks.Count ? list.tasks[list.taskCursor] : null;
+                    if (!SamePendingTask(before, after))
+                    {
+                        list.pausedInput = string.Empty;
+                        list.pausedRevealStage = 0;
+                        list.pausedPreviewReviewIndex = -1;
+                        list.pausedQuizReviewIndex = -1;
+                    }
+                }
+                Save();
+            }
             catch { state.settings = previous; throw; }
+        }
+
+        private static string TaskSettingsSignature(StudySettings settings, string kind)
+        {
+            if (settings == null) return string.Empty;
+            bool example = kind == "new" ? settings.newExample
+                : kind == "list_review" ? settings.listExample : settings.problemExample;
+            bool dictation = kind == "new" ? settings.newDictation
+                : kind == "list_review" ? settings.listDictation : settings.problemDictation;
+            bool spelling = kind == "new" ? settings.newSpelling
+                : kind == "list_review" ? settings.listSpelling : settings.problemSpelling;
+            IEnumerable<string> order = kind == "new" ? settings.newTaskOrder
+                : kind == "list_review" ? settings.listTaskOrder : settings.problemTaskOrder;
+            string questionOrder = kind == "new" ? settings.newQuestionOrder
+                : kind == "list_review" ? settings.listQuestionOrder : settings.problemQuestionOrder;
+            return string.Join("|", new[] { example.ToString(), dictation.ToString(), spelling.ToString(),
+                string.Join(",", order ?? Enumerable.Empty<string>()), questionOrder ?? string.Empty });
+        }
+
+        private static bool SamePendingTask(StudyTask left, StudyTask right)
+        {
+            if (left == null || right == null) return left == null && right == null;
+            return left.mode == right.mode && left.word != null && right.word != null
+                && left.word.Equals(right.word)
+                && NormalizeExamplePart(left.examplePrompt) == NormalizeExamplePart(right.examplePrompt)
+                && NormalizeExamplePart(left.exampleAnswer) == NormalizeExamplePart(right.exampleAnswer);
         }
         public IList<StudyList> Lists { get { return state.lists.AsReadOnly(); } }
         public StudyList Active { get { return state.lists.FirstOrDefault(x => x.id == state.activeListId
@@ -436,24 +596,62 @@ namespace EnglishDictationTool
 
         public void SaveSettings()
         {
+            NormalizeSettings(state.settings);
             if (state.settings.newCount < 0 || state.settings.listCount < 0 || state.settings.problemCount < 0
                 || state.settings.undoLimit < 0 || state.settings.undoLimit > 5
                 || state.settings.autoBackupMinutes < 1 || state.settings.autoBackupKeep < 1
-                || state.settings.exampleCorrectTarget < 0 || state.settings.spellingCorrectTarget < 0)
+                || state.settings.exampleCorrectTarget < 0 || state.settings.dictationCorrectTarget < 0
+                || state.settings.spellingCorrectTarget < 0)
                 throw new ArgumentOutOfRangeException("settings", "学习设置包含超出范围的值。");
             if (state.settings.reviewDays == null || state.settings.reviewDays.Length == 0
                 || state.settings.reviewDays.Any(x => x < 0))
                 throw new ArgumentOutOfRangeException("settings", "复习间隔天数无效。");
-            if ((!state.settings.newExample && !state.settings.newSpelling)
-                || (!state.settings.listExample && !state.settings.listSpelling)
-                || (!state.settings.problemExample && !state.settings.problemSpelling))
-                throw new ArgumentException("三个答题部分各至少启用例句或拼写之一。");
+            if ((!state.settings.newExample && !state.settings.newDictation && !state.settings.newSpelling)
+                || (!state.settings.listExample && !state.settings.listDictation && !state.settings.listSpelling)
+                || (!state.settings.problemExample && !state.settings.problemDictation && !state.settings.problemSpelling)
+                || (!state.settings.freeExample && !state.settings.freeDictation && !state.settings.freeSpelling))
+                throw new ArgumentException("四个学习部分各至少启用一种题型。");
             if (state.settings.defaultBookCounts == null) state.settings.defaultBookCounts = new Dictionary<string, int>();
             if (state.settings.exampleHintKey == 0)
                 state.settings.exampleHintKey = (int)System.Windows.Forms.Keys.Enter;
+            if (state.settings.previousPageKey == 0)
+                state.settings.previousPageKey = (int)(System.Windows.Forms.Keys.Shift
+                    | System.Windows.Forms.Keys.Q);
+            if (state.settings.nextPageKey == 0)
+                state.settings.nextPageKey = (int)(System.Windows.Forms.Keys.Shift
+                    | System.Windows.Forms.Keys.E);
             if (state.undo.Count > state.settings.undoLimit)
                 state.undo.RemoveRange(0, state.undo.Count - state.settings.undoLimit);
             Save();
+        }
+
+        private static void NormalizeSettings(StudySettings settings)
+        {
+            if (settings == null) return;
+            settings.newTaskOrder = NormalizeTaskOrder(settings.newTaskOrder);
+            settings.listTaskOrder = NormalizeTaskOrder(settings.listTaskOrder);
+            settings.problemTaskOrder = NormalizeTaskOrder(settings.problemTaskOrder);
+            settings.freeTaskOrder = NormalizeTaskOrder(settings.freeTaskOrder);
+            settings.newQuestionOrder = NormalizeQuestionOrder(settings.newQuestionOrder);
+            settings.listQuestionOrder = NormalizeQuestionOrder(settings.listQuestionOrder);
+            settings.problemQuestionOrder = NormalizeQuestionOrder(settings.problemQuestionOrder);
+            settings.freeQuestionOrder = NormalizeQuestionOrder(settings.freeQuestionOrder);
+            if (settings.timerPrecision != "millisecond") settings.timerPrecision = "minute";
+        }
+
+        private static List<string> NormalizeTaskOrder(IEnumerable<string> order)
+        {
+            List<string> result = (order ?? Enumerable.Empty<string>())
+                .Where(x => x == "example" || x == "dictation" || x == "spelling")
+                .Distinct().ToList();
+            foreach (string mode in new[] { "example", "dictation", "spelling" })
+                if (!result.Contains(mode)) result.Add(mode);
+            return result;
+        }
+
+        private static string NormalizeQuestionOrder(string order)
+        {
+            return order == "unit_random" || order == "book_random" ? order : "sequential";
         }
 
         public List<StudyWord> AllWords()
@@ -639,6 +837,8 @@ namespace EnglishDictationTool
             {
                 StudyWord record = EnsureWord(selected.First(x =>
                     DataLoader.WordKey(x.word) == DataLoader.WordKey(item.word)));
+                item.sourceBook = record.book;
+                item.sourceUnit = record.unit;
                 item.carriedOver = state.priorityWords.Any(x =>
                     DataLoader.WordKey(x) == DataLoader.WordKey(item.word));
                 record.firstExtractedAt = now;
@@ -722,8 +922,16 @@ namespace EnglishDictationTool
             {
                 id = id, kind = kind, createdAt = now, studyDate = StudyDayKey(now),
                 status = "active", phase = "quiz", sourceListIds = new List<string>(),
-                items = words.Select(x => new StudyItem { word = x }).ToList(),
-                tasks = new List<StudyTask>(), retries = new List<StudyTask>(), history = new List<StudyTask>()
+                items = words.Select(x =>
+                {
+                    StudyWord source = FindWord(x);
+                    return new StudyItem { word = x,
+                        sourceBook = source == null ? string.Empty : source.book,
+                        sourceUnit = source == null ? string.Empty : source.unit };
+                }).ToList(),
+                tasks = new List<StudyTask>(), retries = new List<StudyTask>(), history = new List<StudyTask>(),
+                questionOrderSeed = StableHash(id), pausedPreviewReviewIndex = -1,
+                pausedQuizReviewIndex = -1
             };
             state.lists.Add(list);
             return list;
@@ -745,7 +953,7 @@ namespace EnglishDictationTool
             // selected module so switching between independent sessions cannot roll
             // another module back accidentally.
             state.undo.RemoveAll(x => x.listId != list.id);
-            if (list.phase == "quiz") RebuildPendingTasks(list);
+            if (list.phase == "quiz" && !list.paused) RebuildPendingTasks(list);
             Save();
             return Active;
         }
@@ -785,49 +993,122 @@ namespace EnglishDictationTool
             list.tasks.Clear();
             list.retries.Clear();
             list.taskCursor = 0;
-            bool example = list.kind == "new" ? state.settings.newExample :
-                list.kind == "list_review" ? state.settings.listExample : state.settings.problemExample;
-            bool spelling = list.kind == "new" ? state.settings.newSpelling :
-                list.kind == "list_review" ? state.settings.listSpelling : state.settings.problemSpelling;
-            foreach (StudyItem item in list.items)
+            bool example = ModeEnabled(list.kind, "example");
+            bool dictation = ModeEnabled(list.kind, "dictation");
+            bool spelling = ModeEnabled(list.kind, "spelling");
+            foreach (StudyItem item in OrderedItems(list))
             {
                 if (item.mastered || item.released || notebooks.GetNotebook(item.word) == Notebooks.Mastered) continue;
                 List<StudyTask> itemHistory = (list.history ?? new List<StudyTask>())
                     .Where(x => x.word.Equals(item.word)).ToList();
                 List<ExampleQuestion> questions = ExampleCloze.Questions(item.word);
                 bool exampleDone = ExamplesComplete(item.word, itemHistory);
+                bool dictationDone = itemHistory.Any(x => x.mode == "dictation"
+                    && (x.correct || x.mastered));
                 bool spellingDone = itemHistory.Any(x => x.mode == "spelling"
                     && (x.correct || x.mastered));
                 item.exampleComplete = !example || exampleDone;
+                item.dictationComplete = !dictation || dictationDone;
                 item.spellingComplete = !spelling || spellingDone;
-                if (example && !exampleDone)
+                foreach (string mode in TaskOrder(list.kind))
                 {
-                    if (questions.Count == 0)
+                    if (mode == "example" && example && !exampleDone)
                     {
-                        List<StudyTask> attempts = itemHistory.Where(x => x.mode == "example").ToList();
-                        list.tasks.Add(CreateTask(item.word, "example",
-                            attempts.Any(x => !x.correct && !x.skipped), attempts.Count));
-                    }
-                    else
-                    {
-                        foreach (ExampleQuestion question in questions)
+                        if (questions.Count == 0)
                         {
-                            List<StudyTask> attempts = itemHistory.Where(x => x.mode == "example"
-                                && SameExample(x, question)).ToList();
-                            if (attempts.Any(x => x.correct || x.skipped || x.mastered)) continue;
-                            list.tasks.Add(CreateExampleTask(item.word, question,
+                            List<StudyTask> attempts = itemHistory.Where(x => x.mode == "example").ToList();
+                            list.tasks.Add(CreateTask(item.word, "example",
                                 attempts.Any(x => !x.correct && !x.skipped), attempts.Count));
                         }
+                        else
+                        {
+                            foreach (ExampleQuestion question in questions)
+                            {
+                                List<StudyTask> attempts = itemHistory.Where(x => x.mode == "example"
+                                    && SameExample(x, question)).ToList();
+                                if (attempts.Any(x => x.correct || x.skipped || x.mastered)) continue;
+                                list.tasks.Add(CreateExampleTask(item.word, question,
+                                    attempts.Any(x => !x.correct && !x.skipped), attempts.Count));
+                            }
+                        }
                     }
-                }
-                if (spelling && !spellingDone)
-                {
-                    List<StudyTask> attempts = itemHistory.Where(x => x.mode == "spelling").ToList();
-                    list.tasks.Add(CreateTask(item.word, "spelling",
-                        attempts.Any(x => !x.correct), attempts.Count));
+                    else if (mode == "dictation" && dictation && !dictationDone)
+                    {
+                        List<StudyTask> attempts = itemHistory.Where(x => x.mode == "dictation").ToList();
+                        list.tasks.Add(CreateTask(item.word, "dictation",
+                            attempts.Any(x => !x.correct), attempts.Count));
+                    }
+                    else if (mode == "spelling" && spelling && !spellingDone)
+                    {
+                        List<StudyTask> attempts = itemHistory.Where(x => x.mode == "spelling").ToList();
+                        list.tasks.Add(CreateTask(item.word, "spelling",
+                            attempts.Any(x => !x.correct), attempts.Count));
+                    }
                 }
             }
             if (list.tasks.Count == 0) Finish(list);
+        }
+
+        private bool ModeEnabled(string kind, string mode)
+        {
+            if (mode == "dictation" && temporarilyDisabledDictation.Contains(kind)) return false;
+            if (kind == "new") return mode == "example" ? state.settings.newExample
+                : mode == "dictation" ? state.settings.newDictation : state.settings.newSpelling;
+            if (kind == "list_review") return mode == "example" ? state.settings.listExample
+                : mode == "dictation" ? state.settings.listDictation : state.settings.listSpelling;
+            return mode == "example" ? state.settings.problemExample
+                : mode == "dictation" ? state.settings.problemDictation : state.settings.problemSpelling;
+        }
+
+        public bool DictationEnabled(string kind) { return ModeEnabled(kind, "dictation"); }
+
+        public void TemporarilyDisableDictation(string kind)
+        {
+            temporarilyDisabledDictation.Add(kind);
+            StudyList list = ActiveFor(kind);
+            if (list != null && list.phase == "quiz")
+            {
+                bool wasPaused = list.paused;
+                RebuildPendingTasks(list);
+                list.paused = wasPaused;
+                Save();
+            }
+        }
+
+        private List<string> TaskOrder(string kind)
+        {
+            return kind == "new" ? state.settings.newTaskOrder : kind == "list_review"
+                ? state.settings.listTaskOrder : state.settings.problemTaskOrder;
+        }
+
+        private string QuestionOrder(string kind)
+        {
+            return kind == "new" ? state.settings.newQuestionOrder : kind == "list_review"
+                ? state.settings.listQuestionOrder : state.settings.problemQuestionOrder;
+        }
+
+        private List<StudyItem> OrderedItems(StudyList list)
+        {
+            List<StudyItem> items = new List<StudyItem>(list.items ?? new List<StudyItem>());
+            string mode = QuestionOrder(list.kind);
+            if (mode == "sequential") return items;
+            Func<StudyItem, string> key = item =>
+            {
+                StudyWord source = FindWord(item.word);
+                string book = !string.IsNullOrWhiteSpace(item.sourceBook) ? item.sourceBook
+                    : source == null ? string.Empty : source.book ?? string.Empty;
+                string unit = !string.IsNullOrWhiteSpace(item.sourceUnit) ? item.sourceUnit
+                    : source == null ? string.Empty : source.unit ?? string.Empty;
+                return mode == "unit_random" ? book + "\u001f" + unit : book;
+            };
+            List<StudyItem> result = new List<StudyItem>();
+            foreach (IGrouping<string, StudyItem> group in items.GroupBy(key))
+            {
+                List<StudyItem> shuffled = group.ToList();
+                ShuffleDeterministic(shuffled, list.questionOrderSeed ^ StableHash(group.Key));
+                result.AddRange(shuffled);
+            }
+            return result;
         }
 
         public StudyEndResult EndActive(string kind, DateTime now)
@@ -835,10 +1116,9 @@ namespace EnglishDictationTool
             SettleCrossDay(now);
             StudyList list = ActiveFor(kind);
             if (list == null) throw new InvalidOperationException("当前部分没有未完成列表。");
-            bool example = list.kind == "new" ? state.settings.newExample :
-                list.kind == "list_review" ? state.settings.listExample : state.settings.problemExample;
-            bool spelling = list.kind == "new" ? state.settings.newSpelling :
-                list.kind == "list_review" ? state.settings.listSpelling : state.settings.problemSpelling;
+            bool example = ModeEnabled(list.kind, "example");
+            bool dictation = ModeEnabled(list.kind, "dictation");
+            bool spelling = ModeEnabled(list.kind, "spelling");
             List<StudyItem> kept = new List<StudyItem>();
             List<StudyItem> released = new List<StudyItem>();
             for (int index = 0; index < list.items.Count; index++)
@@ -849,9 +1129,11 @@ namespace EnglishDictationTool
                 List<StudyTask> history = (list.history ?? new List<StudyTask>())
                     .Where(x => x.word.Equals(item.word)).ToList();
                 bool exampleDone = !example || ExamplesComplete(item.word, history);
+                bool dictationDone = !dictation || history.Any(x => x.mode == "dictation"
+                    && (x.correct || x.mastered));
                 bool spellingDone = !spelling || history.Any(x => x.mode == "spelling"
                     && (x.correct || x.mastered));
-                if (mastered || (previewed && exampleDone && spellingDone)) kept.Add(item);
+                if (mastered || (previewed && exampleDone && dictationDone && spellingDone)) kept.Add(item);
                 else released.Add(item);
             }
             if (list.kind == "new")
@@ -876,6 +1158,8 @@ namespace EnglishDictationTool
             list.taskCursor = 0;
             list.status = "ended";
             list.phase = "done";
+            list.paused = false;
+            list.pausedInput = string.Empty;
             if (state.activeListId == list.id) state.activeListId = null;
             state.undo.RemoveAll(x => x.listId == list.id);
             Save();
@@ -961,7 +1245,8 @@ namespace EnglishDictationTool
             if (shouldCount)
             {
                 result = notebooks.RecordStudyAnswer(task.word, correct, task.mode, true,
-                    state.settings.exampleCorrectTarget, state.settings.spellingCorrectTarget, now);
+                    state.settings.exampleCorrectTarget, state.settings.dictationCorrectTarget,
+                    state.settings.spellingCorrectTarget, now);
                 task.notebookCounted = true;
             }
             else result = new AnswerOutcome { Correct = correct };
@@ -972,6 +1257,7 @@ namespace EnglishDictationTool
             if (correct)
             {
                 if (task.mode == "example") item.exampleComplete = ExamplesComplete(task.word, list.history);
+                else if (task.mode == "dictation") item.dictationComplete = true;
                 else item.spellingComplete = true;
             }
             else
@@ -1027,6 +1313,56 @@ namespace EnglishDictationTool
             return GameEngine.CleanEnglish(task.word);
         }
 
+        public List<string> AcceptedAnswersForTask(StudyTask task)
+        {
+            if (task == null) return new List<string>();
+            if (task.mode == "example")
+            {
+                EnsureExampleTask(task);
+                List<string> values = task.exampleAnswers == null
+                    ? new List<string>() : new List<string>(task.exampleAnswers);
+                if (!string.IsNullOrWhiteSpace(task.exampleAnswer)) values.Insert(0, task.exampleAnswer);
+                return values.Where(x => !string.IsNullOrWhiteSpace(x))
+                    .Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+            }
+            StudyWord record = FindWord(task.word);
+            List<string> accepted = new List<string> { GameEngine.CleanEnglish(task.word) };
+            if (state.settings.fuzzyAnswers && record != null && record.acceptedAnswers != null)
+                accepted.AddRange(record.acceptedAnswers);
+            return accepted.Where(x => !string.IsNullOrWhiteSpace(x))
+                .Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+        }
+
+        public void SaveSessionState(string listId, string input, int revealStage,
+            int previewReviewIndex, int quizReviewIndex, bool paused)
+        {
+            StudyList list = state.lists.FirstOrDefault(x => x.id == listId && x.status == "active");
+            if (list == null) return;
+            list.pausedInput = input ?? string.Empty;
+            list.pausedRevealStage = Math.Max(0, revealStage);
+            list.pausedPreviewReviewIndex = previewReviewIndex;
+            list.pausedQuizReviewIndex = quizReviewIndex;
+            list.paused = paused;
+            Save();
+        }
+
+        public void AddActiveMilliseconds(string listId, long milliseconds)
+        {
+            if (milliseconds <= 0) return;
+            StudyList list = state.lists.FirstOrDefault(x => x.id == listId);
+            if (list == null) return;
+            list.activeMilliseconds = Math.Max(0, list.activeMilliseconds + milliseconds);
+            Save();
+        }
+
+        public void ClearPause(string listId)
+        {
+            StudyList list = state.lists.FirstOrDefault(x => x.id == listId && x.status == "active");
+            if (list == null) return;
+            list.paused = false;
+            Save();
+        }
+
         private StudyTask CreateTask(WordEntry word, string mode, bool replay = false, int attempt = 0)
         {
             StudyTask task = new StudyTask
@@ -1075,6 +1411,53 @@ namespace EnglishDictationTool
                 return attempts.Any(x => x.correct || x.skipped || x.mastered);
             return questions.All(question => attempts.Any(task =>
                 (task.correct || task.skipped || task.mastered) && SameExample(task, question)));
+        }
+
+        public StudyProgress Progress(StudyList list)
+        {
+            StudyProgress progress = new StudyProgress();
+            if (list == null || list.items == null) return progress;
+            bool example = ModeEnabled(list.kind, "example");
+            bool dictation = ModeEnabled(list.kind, "dictation");
+            bool spelling = ModeEnabled(list.kind, "spelling");
+            List<StudyTask> history = list.history ?? new List<StudyTask>();
+            for (int index = 0; index < list.items.Count; index++)
+            {
+                StudyItem item = list.items[index];
+                if (item == null || item.word == null || item.released) continue;
+                bool mastered = item.mastered
+                    || notebooks.GetNotebook(item.word) == Notebooks.Mastered;
+                if (list.kind == "new")
+                {
+                    progress.total++;
+                    if (mastered || index < list.previewCursor) progress.completed++;
+                }
+                if (mastered) continue;
+                List<StudyTask> wordHistory = history.Where(x => x != null && x.word != null
+                    && DataLoader.WordKey(x.word) == DataLoader.WordKey(item.word)).ToList();
+                if (example)
+                {
+                    List<ExampleQuestion> questions = ExampleCloze.Questions(item.word);
+                    progress.total += questions.Count;
+                    foreach (ExampleQuestion question in questions)
+                        if (wordHistory.Any(task => task.mode == "example" && task.correct
+                            && SameExample(task, question))) progress.completed++;
+                }
+                if (dictation)
+                {
+                    progress.total++;
+                    if (wordHistory.Any(task => task.mode == "dictation" && task.correct))
+                        progress.completed++;
+                }
+                if (spelling)
+                {
+                    progress.total++;
+                    if (wordHistory.Any(task => task.mode == "spelling" && task.correct))
+                        progress.completed++;
+                }
+            }
+            if (progress.completed > progress.total) progress.completed = progress.total;
+            return progress;
         }
 
         private bool EnsureExampleTask(StudyTask task)
@@ -1250,7 +1633,10 @@ namespace EnglishDictationTool
                 foreach (StudyItem item in list.items)
                 {
                     if (item.mastered || notebooks.GetNotebook(item.word) == Notebooks.Mastered) continue;
-                    if (item.exampleComplete && item.spellingComplete) continue;
+                    bool exampleDone = !ModeEnabled(list.kind, "example") || item.exampleComplete;
+                    bool dictationDone = !ModeEnabled(list.kind, "dictation") || item.dictationComplete;
+                    bool spellingDone = !ModeEnabled(list.kind, "spelling") || item.spellingComplete;
+                    if (exampleDone && dictationDone && spellingDone) continue;
                     item.released = true;
                     StudyWord word = FindWord(item.word);
                     if (word == null) word = EnsureWord(new StudyWord { word = item.word });
@@ -1262,6 +1648,8 @@ namespace EnglishDictationTool
                 state.priorityWords.InsertRange(0, released);
                 list.status = "settled";
                 list.phase = "done";
+                list.paused = false;
+                list.pausedInput = string.Empty;
                 if (state.activeListId == list.id) state.activeListId = null;
                 changed = true;
             }
@@ -1272,6 +1660,8 @@ namespace EnglishDictationTool
         {
             list.status = "completed";
             list.phase = "done";
+            list.paused = false;
+            list.pausedInput = string.Empty;
             if (state.activeListId == list.id) state.activeListId = null;
         }
 
@@ -1300,6 +1690,26 @@ namespace EnglishDictationTool
             {
                 int j = random.Next(i + 1);
                 T swap = list[i]; list[i] = list[j]; list[j] = swap;
+            }
+        }
+
+        private static void ShuffleDeterministic<T>(IList<T> list, int seed)
+        {
+            Random generator = new Random(seed == int.MinValue ? 0 : Math.Abs(seed));
+            for (int i = list.Count - 1; i > 0; i--)
+            {
+                int j = generator.Next(i + 1);
+                T swap = list[i]; list[i] = list[j]; list[j] = swap;
+            }
+        }
+
+        private static int StableHash(string value)
+        {
+            unchecked
+            {
+                int hash = 17;
+                foreach (char character in value ?? string.Empty) hash = hash * 31 + character;
+                return hash == 0 ? 17 : hash;
             }
         }
     }

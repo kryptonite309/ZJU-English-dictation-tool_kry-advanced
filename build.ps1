@@ -26,10 +26,13 @@ New-Item -ItemType Directory -Force -Path $outputDirectoryPath | Out-Null
     /platform:x64 `
     /optimize+ `
     /win32manifest:"$sourceDirectory\app.manifest" `
+    /win32icon:"$sourceDirectory\app.ico" `
     /out:"$outputDirectoryPath\main.exe" `
     /reference:System.dll `
     /reference:System.Core.dll `
     /reference:System.Drawing.dll `
+    /reference:System.IO.Compression.dll `
+    /reference:System.IO.Compression.FileSystem.dll `
     /reference:"$($speechAssembly.FullName)" `
     /reference:System.Windows.Forms.dll `
     /reference:System.Web.Extensions.dll `
@@ -46,7 +49,12 @@ New-Item -ItemType Directory -Force -Path $outputDirectoryPath | Out-Null
     "$sourceDirectory\BackupService.cs" `
     "$sourceDirectory\StudySettingsForm.cs" `
     "$sourceDirectory\StudyTests.cs" `
-    "$sourceDirectory\Pronunciation.cs"
+    "$sourceDirectory\Pronunciation.cs" `
+    "$sourceDirectory\LearningSupport.cs" `
+    "$sourceDirectory\PracticeStore.cs" `
+    "$sourceDirectory\StatisticsForm.cs" `
+    "$sourceDirectory\UpdateService.cs" `
+    "$sourceDirectory\V120Tests.cs"
 
 if ($LASTEXITCODE -ne 0) {
     throw "构建失败，退出代码: $LASTEXITCODE"

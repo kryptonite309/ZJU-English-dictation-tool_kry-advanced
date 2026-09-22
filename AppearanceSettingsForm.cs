@@ -35,11 +35,17 @@ namespace EnglishDictationTool
             new KeyValuePair<string, string>("new", "新学"),
             new KeyValuePair<string, string>("list_review", "历史列表复习"),
             new KeyValuePair<string, string>("problem_review", "错题与易错词复习"),
-            new KeyValuePair<string, string>("calendar", "日历")
+            new KeyValuePair<string, string>("calendar", "日历"),
+            new KeyValuePair<string, string>("pause", "暂停遮罩（共用）"),
+            new KeyValuePair<string, string>("pause_new", "暂停遮罩 · 新学"),
+            new KeyValuePair<string, string>("pause_list_review", "暂停遮罩 · 历史列表复习"),
+            new KeyValuePair<string, string>("pause_problem_review", "暂停遮罩 · 错题复习"),
+            new KeyValuePair<string, string>("pause_free", "暂停遮罩 · 自由练习")
         };
 
         public AppearanceSettingsForm(AppearanceStore appearance)
         {
+            ModernUI.ApplyAppIcon(this);
             store = appearance;
             draft = store.CopySettings();
             Text = "外观定制";
@@ -217,8 +223,17 @@ namespace EnglishDictationTool
             actions.Controls.Add(MakeButton("改用纯色", delegate
             {
                 draft.backgrounds[currentBackground].image = "";
+                draft.backgrounds[currentBackground].inherit = false;
                 RefreshBackground();
             }));
+            Button inheritPause = MakeButton("继承共用遮罩", delegate
+            {
+                if (currentBackground == null || !currentBackground.StartsWith("pause_")) return;
+                draft.backgrounds[currentBackground].inherit = true;
+                RefreshBackground();
+            });
+            inheritPause.Width = 165;
+            actions.Controls.Add(inheritPause);
             flow.Controls.Add(actions);
             FlowLayoutPanel colors = new FlowLayoutPanel { Width = 890, Height = 48, WrapContents = false };
             colors.Controls.Add(Label("底色", 70));
@@ -234,7 +249,7 @@ namespace EnglishDictationTool
             modes.Controls.Add(Label("图片显示", 100));
             fit = new DarkComboBox { Width = 180,
                 BackColor = Theme.Surface, ForeColor = Theme.Text };
-            fit.Items.AddRange(new object[] { "填满并裁剪", "完整显示", "拉伸铺满" });
+            fit.Items.AddRange(new object[] { "填满并裁剪", "完整显示", "拉伸铺满", "原尺寸居中" });
             modes.Controls.Add(fit);
             flow.Controls.Add(modes);
             preview = new Panel { Width = 850, Height = 240, BorderStyle = BorderStyle.FixedSingle };
@@ -256,6 +271,8 @@ namespace EnglishDictationTool
         private void ChangedBackground()
         {
             if (updatingBackground) return;
+            if (currentBackground != null && currentBackground.StartsWith("pause_"))
+                draft.backgrounds[currentBackground].inherit = false;
             SaveCurrentBackground();
             preview.Invalidate();
         }
@@ -275,10 +292,13 @@ namespace EnglishDictationTool
                         float scale = background.fit == "contain"
                             ? Math.Min((float)bounds.Width / image.Width, (float)bounds.Height / image.Height)
                             : Math.Max((float)bounds.Width / image.Width, (float)bounds.Height / image.Height);
-                        Rectangle target = background.fit == "stretch" ? bounds : new Rectangle(
-                            (bounds.Width - (int)(image.Width * scale)) / 2,
-                            (bounds.Height - (int)(image.Height * scale)) / 2,
-                            (int)(image.Width * scale), (int)(image.Height * scale));
+                        Rectangle target = background.fit == "stretch" ? bounds
+                            : background.fit == "center" ? new Rectangle(
+                                (bounds.Width - image.Width) / 2, (bounds.Height - image.Height) / 2,
+                                image.Width, image.Height)
+                            : new Rectangle((bounds.Width - (int)(image.Width * scale)) / 2,
+                                (bounds.Height - (int)(image.Height * scale)) / 2,
+                                (int)(image.Width * scale), (int)(image.Height * scale));
                         graphics.DrawImage(image, target);
                     }
                     using (Brush shadeBrush = new SolidBrush(Color.FromArgb(background.shade * 255 / 100, 0, 0, 0)))
@@ -296,7 +316,8 @@ namespace EnglishDictationTool
             BackgroundAppearance background = draft.backgrounds[currentBackground];
             background.color = (int)solidColor.Tag;
             background.shade = (int)shade.Value;
-            background.fit = fit.SelectedIndex == 1 ? "contain" : fit.SelectedIndex == 2 ? "stretch" : "cover";
+            background.fit = fit.SelectedIndex == 1 ? "contain" : fit.SelectedIndex == 2
+                ? "stretch" : fit.SelectedIndex == 3 ? "center" : "cover";
         }
 
         private void RefreshBackground()
@@ -308,9 +329,14 @@ namespace EnglishDictationTool
             solidColor.BackColor = Color.FromArgb(background.color);
             solidColor.ForeColor = Contrast(solidColor.BackColor);
             shade.Value = Math.Max(shade.Minimum, Math.Min(shade.Maximum, background.shade));
-            fit.SelectedIndex = background.fit == "contain" ? 1 : background.fit == "stretch" ? 2 : 0;
-            imageName.Text = string.IsNullOrWhiteSpace(background.image)
-                ? "当前使用纯色背景" : "已导入：" + System.IO.Path.GetFileName(background.image);
+            fit.SelectedIndex = background.fit == "contain" ? 1 : background.fit == "stretch"
+                ? 2 : background.fit == "center" ? 3 : 0;
+            imageName.Text = background.inherit && currentBackground.StartsWith("pause_")
+                ? "当前继承共用暂停遮罩"
+                : string.IsNullOrWhiteSpace(background.image)
+                    ? (currentBackground.StartsWith("pause") ? "未设置图片，暂停时使用毛玻璃遮罩"
+                        : "当前使用纯色背景")
+                    : "已导入：" + System.IO.Path.GetFileName(background.image);
             updatingBackground = false;
             preview.Invalidate();
         }
@@ -325,6 +351,7 @@ namespace EnglishDictationTool
                 {
                     SaveCurrentBackground();
                     draft.backgrounds[currentBackground].image = store.ImportImage(picker.FileName);
+                    draft.backgrounds[currentBackground].inherit = false;
                     RefreshBackground();
                 }
                 catch (Exception error) { MessageBox.Show(this, error.Message, "图片导入失败"); }

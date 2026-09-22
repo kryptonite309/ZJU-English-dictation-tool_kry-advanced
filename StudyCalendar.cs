@@ -55,7 +55,13 @@ namespace EnglishDictationTool
             if (backgroundImage != null)
             {
                 Rectangle target = ClientRectangle;
-                if (background.fit != "stretch")
+                if (background.fit == "center")
+                {
+                    target = new Rectangle((Width - backgroundImage.Width) / 2,
+                        (Height - backgroundImage.Height) / 2,
+                        backgroundImage.Width, backgroundImage.Height);
+                }
+                else if (background.fit != "stretch")
                 {
                     float scale = background.fit == "contain"
                         ? Math.Min((float)Width / backgroundImage.Width, (float)Height / backgroundImage.Height)

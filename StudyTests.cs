@@ -102,14 +102,20 @@ namespace EnglishDictationTool
             DateTime multiExampleNow = DateTime.Now.AddHours(1);
             StudyList multiExampleList = multiExampleStore.ExtractNew(
                 new Dictionary<string, int> { { "book1", 1 } }, multiExampleNow);
+            Require(multiExampleStore.Progress(multiExampleList).total == 3,
+                "多条例句分别进入进度分母");
             for (int step = 0; step < 3; step++) multiExampleStore.AdvancePreview();
             Require(multiExampleList.items.Count == 1 && multiExampleList.tasks.Count == 2
                 && multiExampleList.tasks.Select(x => x.examplePrompt).Distinct().Count() == 2,
                 "同一单词的所有不同例句都生成独立题目");
+            Require(multiExampleStore.Progress(multiExampleList).completed == 1,
+                "完成展示后保留多条例句待完成进度");
             Require(multiExampleStore.Submit("erase", multiExampleNow.AddMinutes(1)).Correct
                 && multiExampleNotebooks.GetRecord(multiErase).exampleCorrectCount == 0
                 && multiExampleList.history.Count(x => x.notebookCounted) == 0,
                 "尚有例句未完成时不提前计入答对次数");
+            Require(multiExampleStore.Progress(multiExampleList).completed == 2,
+                "每条例句答对后单独增加一次进度");
             multiExampleStore.Undo();
             Require(multiExampleStore.CurrentTask().exampleAnswer == "erased",
                 "撤销上一条例句时保留当前例句");
@@ -276,6 +282,11 @@ namespace EnglishDictationTool
             Require(store.Settings.exampleFirstLetterHints
                 && store.Settings.exampleHintKey == (int)System.Windows.Forms.Keys.Enter,
                 "所有例句首字母提示默认开启且提示键为 Enter");
+            Require(store.Settings.previousPageKey == (int)(System.Windows.Forms.Keys.Shift
+                    | System.Windows.Forms.Keys.Q)
+                && store.Settings.nextPageKey == (int)(System.Windows.Forms.Keys.Shift
+                    | System.Windows.Forms.Keys.E),
+                "前后翻页快捷键默认值");
             Require(!ExampleRevealFlow.ShowsFirstLetter(0, true)
                 && !ExampleRevealFlow.ShowsMeaning(0, true)
                 && ExampleRevealFlow.ShowsFirstLetter(1, true)
@@ -298,12 +309,21 @@ namespace EnglishDictationTool
             StudyList first = store.ExtractNew(new Dictionary<string, int> { { "book1", 2 } }, firstDay);
             Require(first.items.Count == 2 && first.items[0].word.english == "alpha"
                 && first.items[1].word.english == "bravo", "单元顺序提取");
+            StudyProgress firstProgress = store.Progress(first);
+            Require(firstProgress.completed == 0 && firstProgress.total == 4,
+                "新学进度包含展示与正式题目");
             Require(File.Exists(Path.Combine(root, "study_lists", first.id + ".json")), "独立列表文件");
             Require(store.AvailableCounts()["book1"] == 2, "提取后余量");
             for (int i = 0; i < 6; i++) store.AdvancePreview();
             Require(store.Active.phase == "quiz" && store.CurrentTask().word.english == "alpha", "展示后拼写");
+            firstProgress = store.Progress(first);
+            Require(firstProgress.completed == 2 && firstProgress.total == 4,
+                "看完单词后只增加展示进度");
             Require(store.Submit("ALPHA", firstDay.AddMinutes(1)).Correct, "大小写宽容");
+            Require(store.Progress(first).completed == 3, "首次答对增加正式题目进度");
             Require(!store.Submit("brav0", firstDay.AddMinutes(2)).Correct, "拼写错误不宽容");
+            Require(store.Progress(first).completed == 3,
+                "答错进入复现但不增加进度");
             Require(first.history.Count == 2 && first.history[0].submittedAnswer == "ALPHA"
                 && first.history[1].submittedAnswer == "brav0" && !first.history[1].correct,
                 "已答题目保留只读回看记录与当时作答");
@@ -330,6 +350,9 @@ namespace EnglishDictationTool
             Require(store.CurrentTask().word.english == "bravo", "撤销词下题再做");
             store.Submit("bravo", firstDay.AddDays(1).AddMinutes(4));
             Require(store.Active == null, "所有词答对后完成列表");
+            StudyList completedSecond = store.Lists.First(x => x.id == second.id);
+            Require(store.Progress(completedSecond).completed == store.Progress(completedSecond).total
+                && store.Progress(completedSecond).percent == 100, "列表全部答对后进度为百分之百");
             WordEntry dive = loader.LoadWordList("book1", new[] { "unit2" })[1];
             Require(store.IsCorrect(dive, "dive into / in"), "原文严格匹配");
             Require(!store.IsCorrect(dive, "dive in"), "默认不接受斜线展开");

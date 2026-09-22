@@ -11,6 +11,7 @@ namespace EnglishDictationTool
         private readonly NotebookStore notebooks;
         private readonly List<WordEntry> allWords;
         private readonly DarkComboBox filter;
+        private readonly DarkComboBox sort;
         private readonly TextBox search;
         private readonly ListView words;
         private readonly DarkComboBox destination;
@@ -19,6 +20,7 @@ namespace EnglishDictationTool
 
         public NotebookManagerForm(DataLoader loader, NotebookStore store)
         {
+            ModernUI.ApplyAppIcon(this);
             notebooks = store;
             allWords = LoadAllWords(loader, store);
             Text = "单词本管理";
@@ -55,11 +57,19 @@ namespace EnglishDictationTool
             controls.Controls.Add(filter);
             controls.Controls.Add(MakeLabel("搜索"));
             search = new TextBox();
-            search.Width = 330;
+            search.Width = 240;
             search.BackColor = Theme.Surface;
             search.ForeColor = Theme.Text;
             search.TextChanged += delegate { RefreshWords(null); };
             controls.Controls.Add(search);
+            controls.Controls.Add(MakeLabel("排序"));
+            sort = new DarkComboBox();
+            sort.Width = 170;
+            sort.Items.Add("按英文排序");
+            sort.Items.Add("最近编辑优先");
+            sort.SelectedIndex = 0;
+            sort.SelectedIndexChanged += delegate { RefreshWords(null); };
+            controls.Controls.Add(sort);
             summary = MakeLabel(string.Empty);
             summary.AutoSize = true;
             controls.Controls.Add(summary);
@@ -74,10 +84,11 @@ namespace EnglishDictationTool
             words.ShowItemToolTips = true;
             words.BackColor = Theme.Surface;
             words.ForeColor = Theme.Text;
-            words.Columns.Add("英文", 300);
-            words.Columns.Add("所属单词本", 150);
-            words.Columns.Add("连续答对", 115);
-            words.Columns.Add("释义", 680);
+            words.Columns.Add("英文", 250);
+            words.Columns.Add("所属单词本", 140);
+            words.Columns.Add("连续答对", 105);
+            words.Columns.Add("最后编辑", 210);
+            words.Columns.Add("释义", 505);
             words.SelectedIndexChanged += delegate { ShowSelection(); };
             layout.Controls.Add(words, 0, 1);
 
@@ -165,6 +176,10 @@ namespace EnglishDictationTool
                     || PartOfSpeech.DisplayChinese(item).IndexOf(query,
                         StringComparison.CurrentCultureIgnoreCase) >= 0);
             }
+            if (sort.SelectedIndex == 1)
+                candidates = candidates.OrderByDescending(item => notebooks.GetLastEditedAt(item))
+                    .ThenBy(item => GameEngine.CleanEnglish(item),
+                        StringComparer.CurrentCultureIgnoreCase);
 
             words.BeginUpdate();
             try
@@ -176,6 +191,9 @@ namespace EnglishDictationTool
                     ListViewItem row = new ListViewItem(GameEngine.CleanEnglish(word));
                     row.SubItems.Add(Notebooks.DisplayName(notebook));
                     row.SubItems.Add(notebooks.GetCorrectCount(word).ToString());
+                    DateTime edited = notebooks.GetLastEditedAt(word);
+                    row.SubItems.Add(edited == DateTime.MinValue ? "—"
+                        : edited.ToString("yyyy-MM-dd HH:mm"));
                     row.SubItems.Add(PartOfSpeech.DisplayChinese(word));
                     row.ToolTipText = (word.english ?? string.Empty) + Environment.NewLine
                         + PartOfSpeech.DisplayChinese(word);

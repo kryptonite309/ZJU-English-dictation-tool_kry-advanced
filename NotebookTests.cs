@@ -56,6 +56,9 @@ namespace EnglishDictationTool
             store.MoveToNotebook(later[3], Notebooks.ErrorProne);
             Require(store.RecentWords.Count == 5 && store.RecentWords[0].Equals(later[3]),
                 "手动调整刷新队列且不重复");
+            Require(store.GetLastEditedAt(later[3]) != DateTime.MinValue
+                && store.GetLastEditedAt(later[3]) >= store.GetLastEditedAt(later[5]),
+                "单词最后编辑时间随最近操作更新");
 
             NotebookStore reloaded = new NotebookStore(fixtureRoot);
             Require(reloaded.GetNotebook(first) == Notebooks.Mastered, "已掌握持久化");
@@ -64,6 +67,8 @@ namespace EnglishDictationTool
                 "复习设置持久化");
             Require(reloaded.MasteryShortcut == (Keys.Control | Keys.Alt | Keys.G), "斩词键持久化");
             Require(reloaded.RecentWords.Count == 5, "待定队列持久化");
+            Require(reloaded.GetLastEditedAt(later[3]) != DateTime.MinValue,
+                "最后编辑时间持久化");
 
             List<WordEntry> legacy = new JavaScriptSerializer().Deserialize<List<WordEntry>>(
                 File.ReadAllText(Path.Combine(fixtureRoot, "wrong_words.json"), Encoding.UTF8));

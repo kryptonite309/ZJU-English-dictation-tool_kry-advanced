@@ -16,25 +16,32 @@ namespace EnglishDictationTool
         private readonly DataLoader loader;
         private readonly BackupService backups;
         private readonly AppearanceStore appearance;
+        private readonly PracticeStore practice;
         private readonly PronunciationStore pronunciation;
         private readonly Panel freePracticePanel;
         private TabControl tabs;
         private readonly StudySettings draft;
         private readonly PronunciationSettings pronunciationDraft;
         private readonly Dictionary<string, NumericUpDown> quotas = new Dictionary<string, NumericUpDown>();
-        private NumericUpDown a, b, c, exampleTarget, spellingTarget, undoLimit, backupMinutes, backupKeep;
-        private CheckBox random, fuzzy, newExample, newSpelling, listExample, listSpelling,
-            problemExample, problemSpelling, overlap, dueOnly, carryCount, carryPreview,
-            exampleFirstLetter, reviewFirstLetter;
-        private TextBox days, previewKey, exampleHintKey, masteryKey, undoKey, backupKey;
+        private NumericUpDown a, b, c, exampleTarget, dictationTarget, spellingTarget,
+            undoLimit, backupMinutes, backupKeep;
+        private CheckBox random, fuzzy, newExample, newDictation, newSpelling,
+            listExample, listDictation, listSpelling, problemExample, problemDictation,
+            problemSpelling, freeExample, freeDictation, freeSpelling, overlap, dueOnly,
+            carryCount, carryPreview, exampleFirstLetter, dictationMeaningHint,
+            reviewFirstLetter, backupBeforeEnd, timerEnabled, updateOnStartup;
+        private TextBox days, previewKey, exampleHintKey, previousPageKey, nextPageKey,
+            masteryKey, undoKey, backupKey, pauseKey;
+        private ComboBox newQuestionOrder, listQuestionOrder, problemQuestionOrder,
+            freeQuestionOrder, timerPrecision;
+        private ListBox newTaskOrder, listTaskOrder, problemTaskOrder, freeTaskOrder;
         private TextBox speechReplayKey;
         private CheckBox speechEnabled, speechAutomatic;
         private ComboBox speechVoice;
-        private NumericUpDown speechRate, speechVolume;
+        private NumericUpDown speechRate;
+        private TrackBar speechVolume;
+        private Label speechVolumeValue;
         private WordPronouncer speechPreview;
-        private StudyCalendarView calendar;
-        private Label dailySummary;
-        private ListView dailyLists;
         private ListView backupList;
         private TextBox backupPath;
         private ComboBox managedBook;
@@ -45,8 +52,10 @@ namespace EnglishDictationTool
             DataLoader dataLoader, BackupService backupService, AppearanceStore appearanceStore,
             Panel freeSettingsPanel = null)
         {
+            ModernUI.ApplyAppIcon(this);
             store = study; notebooks = notebookStore; loader = dataLoader; backups = backupService;
             appearance = appearanceStore;
+            practice = new PracticeStore(AppPaths.FindProjectRoot());
             freePracticePanel = freeSettingsPanel;
             draft = new JavaScriptSerializer().Deserialize<StudySettings>(
                 new JavaScriptSerializer().Serialize(store.Settings));
@@ -80,6 +89,7 @@ namespace EnglishDictationTool
             BuildAnswerTab(tabs);
             BuildShortcutTab(tabs);
             BuildPronunciationTab(tabs);
+            BuildUpdateTab(tabs);
             BuildAppearanceTab(tabs);
             BuildCalendarTab(tabs);
             BuildBackupTab(tabs);
@@ -194,23 +204,49 @@ namespace EnglishDictationTool
         private void BuildAnswerTab(TabControl tabs)
         {
             FlowLayoutPanel page = Page(tabs, "答题与归档");
-            page.Controls.Add(Label("例句与拼写可同时开启；同一词总是先例句后拼写。", 800));
+            page.Controls.Add(Label("例句填空、听写、普通拼写可以同时开启；每个学习部分可分别调整题型先后和单词顺序。", 1000));
             newExample = Check("新学：例句填空", draft.newExample);
+            newDictation = Check("新学：听写", draft.newDictation);
             newSpelling = Check("新学：普通拼写", draft.newSpelling);
             listExample = Check("历史列表复习：例句填空", draft.listExample);
+            listDictation = Check("历史列表复习：听写", draft.listDictation);
             listSpelling = Check("历史列表复习：普通拼写", draft.listSpelling);
             problemExample = Check("错题/易错词复习：例句填空", draft.problemExample);
+            problemDictation = Check("错题/易错词复习：听写", draft.problemDictation);
             problemSpelling = Check("错题/易错词复习：普通拼写", draft.problemSpelling);
-            foreach (CheckBox item in new[] { newExample, newSpelling, listExample, listSpelling,
-                problemExample, problemSpelling }) page.Controls.Add(item);
+            freeExample = Check("自由练习：例句填空", draft.freeExample);
+            freeDictation = Check("自由练习：听写", draft.freeDictation);
+            freeSpelling = Check("自由练习：普通拼写", draft.freeSpelling);
+            foreach (CheckBox item in new[] { newExample, newDictation, newSpelling,
+                listExample, listDictation, listSpelling, problemExample, problemDictation,
+                problemSpelling, freeExample, freeDictation, freeSpelling }) page.Controls.Add(item);
+
+            newQuestionOrder = QuestionOrderCombo(draft.newQuestionOrder);
+            listQuestionOrder = QuestionOrderCombo(draft.listQuestionOrder);
+            problemQuestionOrder = QuestionOrderCombo(draft.problemQuestionOrder);
+            freeQuestionOrder = QuestionOrderCombo(draft.freeQuestionOrder);
+            page.Controls.Add(Row("新学单词顺序", newQuestionOrder, 320));
+            page.Controls.Add(Row("历史列表复习单词顺序", listQuestionOrder, 320));
+            page.Controls.Add(Row("错题复习单词顺序", problemQuestionOrder, 320));
+            page.Controls.Add(Row("自由练习单词顺序", freeQuestionOrder, 320));
+            newTaskOrder = AddTaskOrderEditor(page, "新学题型顺序", draft.newTaskOrder);
+            listTaskOrder = AddTaskOrderEditor(page, "历史列表复习题型顺序", draft.listTaskOrder);
+            problemTaskOrder = AddTaskOrderEditor(page, "错题复习题型顺序", draft.problemTaskOrder);
+            freeTaskOrder = AddTaskOrderEditor(page, "自由练习题型顺序", draft.freeTaskOrder);
             exampleFirstLetter = Check("所有例句填空启用分阶段首字母提示（默认开启）",
                 draft.exampleFirstLetterHints);
             page.Controls.Add(exampleFirstLetter);
             page.Controls.Add(Label("例句题开始时不会直接显示提示；按提示键后显示首字母，再按一次显示中文，最后提交。关闭首字母后，第一次按键直接显示中文。", 1000));
+            dictationMeaningHint = Check("听写输入框为空时，按提示键显示中文释义",
+                draft.dictationMeaningHint);
+            page.Controls.Add(dictationMeaningHint);
             exampleTarget = Number(draft.exampleCorrectTarget, 0, 99);
+            dictationTarget = Number(draft.dictationCorrectTarget, 0, 99);
             spellingTarget = Number(draft.spellingCorrectTarget, 0, 99);
             page.Controls.Add(Row("错题转易错：例句首次答对次数", exampleTarget, 320));
+            page.Controls.Add(Row("错题转易错：听写首次答对次数", dictationTarget, 320));
             page.Controls.Add(Row("错题转易错：拼写首次答对次数", spellingTarget, 320));
+            page.Controls.Add(Label("三个门槛需要同时满足；复现答对不计次数。单词仍只能通过手动“斩”进入已掌握。", 1000));
             fuzzy = Check("模糊作答：合并词库原文、斜线变体与手动可接受答案", draft.fuzzyAnswers);
             reviewFirstLetter = Check("自由错题拼写直接显示首字母", notebooks.ReviewFirstLetter);
             dueOnly = Check("仅从达到下方间隔天数的错题/易错词中抽取（默认关闭）", draft.reviewDueOnly);
@@ -220,6 +256,67 @@ namespace EnglishDictationTool
             page.Controls.Add(Button("管理可接受答案", delegate { new AcceptedAnswersForm(store, loader).ShowDialog(this); }));
             page.Controls.Add(Button("管理全部单词本", delegate { new NotebookManagerForm(loader, notebooks).ShowDialog(this); }));
             page.Controls.Add(Button("保存设置", delegate { SaveSettings(); }));
+        }
+
+        private static ComboBox QuestionOrderCombo(string value)
+        {
+            ComboBox combo = new DarkComboBox { Width = 300 };
+            combo.Items.AddRange(new object[] { "顺序", "单元内随机", "词书内随机" });
+            combo.SelectedIndex = value == "unit_random" ? 1 : value == "book_random" ? 2 : 0;
+            return combo;
+        }
+
+        private static string QuestionOrderValue(ComboBox combo)
+        {
+            return combo.SelectedIndex == 1 ? "unit_random" : combo.SelectedIndex == 2
+                ? "book_random" : "sequential";
+        }
+
+        private static string ModeDisplay(string mode)
+        {
+            return mode == "example" ? "例句填空" : mode == "dictation" ? "听写" : "普通拼写";
+        }
+
+        private static string ModeValue(string display)
+        {
+            return display == "例句填空" ? "example" : display == "听写" ? "dictation" : "spelling";
+        }
+
+        private static ListBox AddTaskOrderEditor(FlowLayoutPanel page, string title,
+            IEnumerable<string> order)
+        {
+            Panel panel = new Panel { Width = 1040, Height = 150, BackColor = Theme.Background };
+            Label caption = Label(title + "（选中后上移/下移）", 360);
+            caption.Location = new Point(0, 4);
+            ListBox list = new ListBox { Location = new Point(370, 4), Width = 300, Height = 132,
+                BackColor = Theme.Surface, ForeColor = Theme.Text, BorderStyle = BorderStyle.FixedSingle };
+            foreach (string mode in order ?? new[] { "example", "dictation", "spelling" })
+                list.Items.Add(ModeDisplay(mode));
+            foreach (string mode in new[] { "example", "dictation", "spelling" })
+                if (!list.Items.Contains(ModeDisplay(mode))) list.Items.Add(ModeDisplay(mode));
+            Button up = Button("上移", delegate { MoveSelected(list, -1); });
+            Button down = Button("下移", delegate { MoveSelected(list, 1); });
+            up.Width = down.Width = 120;
+            up.Location = new Point(690, 16); down.Location = new Point(690, 72);
+            panel.Controls.Add(caption); panel.Controls.Add(list); panel.Controls.Add(up); panel.Controls.Add(down);
+            page.Controls.Add(panel);
+            return list;
+        }
+
+        private static void MoveSelected(ListBox list, int delta)
+        {
+            int current = list.SelectedIndex;
+            int target = current + delta;
+            if (current < 0 || target < 0 || target >= list.Items.Count) return;
+            object item = list.Items[current];
+            list.Items.RemoveAt(current);
+            list.Items.Insert(target, item);
+            list.SelectedIndex = target;
+        }
+
+        private static List<string> TaskOrderValues(ListBox list)
+        {
+            return list.Items.Cast<object>().Select(x => ModeValue(x.ToString())).ToList();
         }
 
         private void BuildLibraryTab(TabControl tabs)
@@ -371,27 +468,43 @@ namespace EnglishDictationTool
             page.Controls.Add(Label("点击快捷键框后直接按键。冲突的组合不允许保存。", 800));
             previewKey = Shortcut(draft.previewKey, true);
             exampleHintKey = Shortcut(draft.exampleHintKey, true);
+            previousPageKey = Shortcut(draft.previousPageKey, false);
+            nextPageKey = Shortcut(draft.nextPageKey, false);
             masteryKey = Shortcut((int)notebooks.MasteryShortcut, false);
             undoKey = Shortcut(draft.undoKey, false);
             backupKey = Shortcut(draft.manualBackupKey, false);
+            pauseKey = Shortcut(draft.pauseKey, false);
             page.Controls.Add(Row("展示下一层", previewKey, 320));
             page.Controls.Add(Row("例句提示 / 提交（默认 Enter）", exampleHintKey, 320));
+            page.Controls.Add(Row("翻到上一页（默认 Shift+Q）", previousPageKey, 320));
+            page.Controls.Add(Row("翻到下一页（默认 Shift+E）", nextPageKey, 320));
             page.Controls.Add(Row("斩当前词", masteryKey, 320));
             page.Controls.Add(Row("撤销上一个词", undoKey, 320));
             page.Controls.Add(Row("手动备份", backupKey, 320));
+            page.Controls.Add(Row("暂停 / 继续（默认 Ctrl+Shift+P）", pauseKey, 320));
             undoLimit = Number(draft.undoLimit, 0, 5);
             backupMinutes = Number(draft.autoBackupMinutes, 1, 1440);
             backupKeep = Number(draft.autoBackupKeep, 1, 100);
             page.Controls.Add(Row("保留撤销步数（最多 5）", undoLimit, 320));
             page.Controls.Add(Row("自动备份间隔 · 分钟（默认 10）", backupMinutes, 320));
             page.Controls.Add(Row("自动备份最多保留份数（默认 6）", backupKeep, 320));
+            backupBeforeEnd = Check("手动结束列表前自动创建一份手动备份（默认开启）",
+                draft.backupBeforeManualEnd);
+            timerEnabled = Check("学习页面显示并记录计时器（默认开启）", draft.timerEnabled);
+            timerPrecision = new DarkComboBox { Width = 300 };
+            timerPrecision.Items.AddRange(new object[] { "精确到分钟", "速通计时 · 毫秒" });
+            timerPrecision.SelectedIndex = draft.timerPrecision == "millisecond" ? 1 : 0;
+            page.Controls.Add(backupBeforeEnd);
+            page.Controls.Add(timerEnabled);
+            page.Controls.Add(Row("计时器显示精度", timerPrecision, 320));
+            page.Controls.Add(Label("暂停、切换窗口、失去焦点或退出学习页面时不计时；重新进入同一模块后继续累计。统计看板统一显示到分钟。", 1000));
             page.Controls.Add(Button("保存设置", delegate { SaveSettings(); }));
         }
 
         private void BuildPronunciationTab(TabControl tabs)
         {
             FlowLayoutPanel page = Page(tabs, "单词朗读");
-            page.Controls.Add(Label("使用本机英语语音离线朗读；只在展示阶段读出单词，答题阶段不会泄露答案。", 1000));
+            page.Controls.Add(Label("使用本机英语语音离线朗读；展示阶段可自动朗读，听写题只播放语音、不显示英文。", 1000));
             speechEnabled = Check("启用单词朗读", pronunciationDraft.enabled);
             speechAutomatic = Check("展示新单词时自动朗读一次", pronunciationDraft.automatic);
             page.Controls.Add(speechEnabled);
@@ -406,13 +519,45 @@ namespace EnglishDictationTool
             if (speechVoice.Items.Count == 1)
                 page.Controls.Add(Label("当前电脑没有可用的英语语音。安装系统英语语音后，此功能会自动可用。", 1000));
             speechRate = Number(pronunciationDraft.rate, -10, 10);
-            speechVolume = Number(pronunciationDraft.volume, 0, 100);
             page.Controls.Add(Row("语速（-10 最慢，10 最快）", speechRate, 420));
-            page.Controls.Add(Row("音量（0 至 100）", speechVolume, 420));
+            speechVolume = new TrackBar { Minimum = 0, Maximum = 100,
+                Value = Math.Min(100, Math.Max(0, pronunciationDraft.volume)),
+                Width = 350, Height = 38, AutoSize = false, TickStyle = TickStyle.None,
+                SmallChange = 1, LargeChange = 10, BackColor = Theme.Background };
+            speechVolumeValue = new Label { Width = 70, Height = 38,
+                TextAlign = ContentAlignment.MiddleLeft, BackColor = Theme.Background,
+                ForeColor = Theme.Text };
+            Panel volumeControl = new Panel { Width = 440, Height = 42,
+                BackColor = Theme.Background };
+            speechVolume.Location = new Point(0, 2);
+            speechVolumeValue.Location = new Point(362, 1);
+            volumeControl.Controls.Add(speechVolume);
+            volumeControl.Controls.Add(speechVolumeValue);
+            Action updateVolume = delegate { speechVolumeValue.Text = speechVolume.Value + "%"; };
+            speechVolume.ValueChanged += delegate { updateVolume(); };
+            updateVolume();
+            page.Controls.Add(Row("学习音频总音量（朗读与后续提示音共用）", volumeControl, 420));
             speechReplayKey = Shortcut(pronunciationDraft.replayKey, false);
             page.Controls.Add(Row("展示阶段重播快捷键", speechReplayKey, 420));
             page.Controls.Add(Label("默认 Ctrl+R；也可点击学习窗口中的“重播单词”。回看已学单词时可手动重播。", 1000));
             page.Controls.Add(Button("试听 example", delegate { PreviewPronunciation(); }));
+            page.Controls.Add(Button("保存设置", delegate { SaveSettings(); }));
+        }
+
+        private void BuildUpdateTab(TabControl tabs)
+        {
+            FlowLayoutPanel page = Page(tabs, "程序更新");
+            page.Controls.Add(Label("程序从项目 GitHub Releases 获取稳定版本。自动安装前必须同时找到升级包 ZIP 和 SHA256SUMS.txt，并通过校验。", 1050));
+            page.Controls.Add(Label("安装前会创建完整手动备份；更新只替换程序文件，不会覆盖 data、学习进度、单词本、外观、导入词书、备份或用户设置。", 1050));
+            updateOnStartup = Check("每次启动程序时自动检查更新（网络失败时不打扰）",
+                draft.checkUpdatesOnStartup);
+            page.Controls.Add(updateOnStartup);
+            Button check = Button("立即检查更新", delegate
+            {
+                new UpdateService(AppPaths.FindProjectRoot(), backups).CheckAsync(this, false);
+            });
+            check.Width = 220; check.Height = 48;
+            page.Controls.Add(check);
             page.Controls.Add(Button("保存设置", delegate { SaveSettings(); }));
         }
 
@@ -443,11 +588,15 @@ namespace EnglishDictationTool
             {
                 int previewValue = (int)previewKey.Tag;
                 int exampleValue = (int)exampleHintKey.Tag;
+                int previousPageValue = (int)previousPageKey.Tag;
+                int nextPageValue = (int)nextPageKey.Tag;
                 int masteryValue = (int)masteryKey.Tag;
                 int undoValue = (int)undoKey.Tag;
                 int backupValue = (int)backupKey.Tag;
+                int pauseValue = (int)pauseKey.Tag;
                 int speechValue = (int)speechReplayKey.Tag;
-                int[] exclusiveKeys = { masteryValue, undoValue, backupValue, speechValue };
+                int[] exclusiveKeys = { previousPageValue, nextPageValue, masteryValue,
+                    undoValue, backupValue, pauseValue, speechValue };
                 if (exclusiveKeys.Distinct().Count() != exclusiveKeys.Length
                     || exclusiveKeys.Contains(previewValue) || exclusiveKeys.Contains(exampleValue))
                     throw new InvalidOperationException("快捷键有冲突，请为不同操作设置不同的按键。");
@@ -460,19 +609,42 @@ namespace EnglishDictationTool
                 draft.randomExtraction = random.Checked; draft.allowOverlap = overlap.Checked;
                 draft.carryOverCountsInNewCount = carryCount.Checked;
                 draft.carryOverPreview = carryPreview.Checked;
-                draft.newExample = newExample.Checked; draft.newSpelling = newSpelling.Checked;
-                draft.listExample = listExample.Checked; draft.listSpelling = listSpelling.Checked;
-                draft.problemExample = problemExample.Checked; draft.problemSpelling = problemSpelling.Checked;
+                draft.newExample = newExample.Checked; draft.newDictation = newDictation.Checked;
+                draft.newSpelling = newSpelling.Checked;
+                draft.listExample = listExample.Checked; draft.listDictation = listDictation.Checked;
+                draft.listSpelling = listSpelling.Checked;
+                draft.problemExample = problemExample.Checked;
+                draft.problemDictation = problemDictation.Checked;
+                draft.problemSpelling = problemSpelling.Checked;
+                draft.freeExample = freeExample.Checked; draft.freeDictation = freeDictation.Checked;
+                draft.freeSpelling = freeSpelling.Checked;
+                draft.newQuestionOrder = QuestionOrderValue(newQuestionOrder);
+                draft.listQuestionOrder = QuestionOrderValue(listQuestionOrder);
+                draft.problemQuestionOrder = QuestionOrderValue(problemQuestionOrder);
+                draft.freeQuestionOrder = QuestionOrderValue(freeQuestionOrder);
+                draft.newTaskOrder = TaskOrderValues(newTaskOrder);
+                draft.listTaskOrder = TaskOrderValues(listTaskOrder);
+                draft.problemTaskOrder = TaskOrderValues(problemTaskOrder);
+                draft.freeTaskOrder = TaskOrderValues(freeTaskOrder);
                 draft.exampleFirstLetterHints = exampleFirstLetter.Checked;
+                draft.dictationMeaningHint = dictationMeaningHint.Checked;
                 draft.exampleCorrectTarget = (int)exampleTarget.Value;
+                draft.dictationCorrectTarget = (int)dictationTarget.Value;
                 draft.spellingCorrectTarget = (int)spellingTarget.Value;
                 draft.fuzzyAnswers = fuzzy.Checked; draft.reviewDays = intervals;
                 draft.reviewDueOnly = dueOnly.Checked;
                 draft.previewKey = previewValue; draft.exampleHintKey = exampleValue;
+                draft.previousPageKey = previousPageValue;
+                draft.nextPageKey = nextPageValue;
                 draft.undoKey = undoValue; draft.manualBackupKey = backupValue;
+                draft.pauseKey = pauseValue;
                 draft.undoLimit = (int)undoLimit.Value;
                 draft.autoBackupMinutes = (int)backupMinutes.Value;
                 draft.autoBackupKeep = (int)backupKeep.Value;
+                draft.backupBeforeManualEnd = backupBeforeEnd.Checked;
+                draft.timerEnabled = timerEnabled.Checked;
+                draft.timerPrecision = timerPrecision.SelectedIndex == 1 ? "millisecond" : "minute";
+                draft.checkUpdatesOnStartup = updateOnStartup.Checked;
                 draft.defaultBookCounts = quotas.ToDictionary(x => x.Key, x => (int)x.Value.Value);
                 store.UpdateSettings(draft);
                 notebooks.MasteryShortcut = (Keys)masteryValue;
@@ -490,61 +662,16 @@ namespace EnglishDictationTool
 
         private void BuildCalendarTab(TabControl tabs)
         {
-            FlowLayoutPanel page = Page(tabs, "学习日历");
-            page.Controls.Add(Label("按凌晨 4 点的学习日统计；点击日期查看详情，双击下方列表可打开。", 1100));
-            page.Controls.Add(Label("格内：新＝新学词、列＝列表复习词、错＝错题复习词、新表＝新学列表数。", 1100));
-            calendar = new StudyCalendarView(store, appearance);
-            calendar.SelectedDateChanged += delegate { RefreshDay(); };
-            page.Controls.Add(calendar);
-            dailySummary = Label(string.Empty, 1100);
-            dailySummary.Height = 100;
-            dailySummary.Font = new Font("Microsoft YaHei UI", 11, FontStyle.Bold);
-            page.Controls.Add(dailySummary);
-            dailyLists = new ListView { Width = 1060, Height = 270, BackColor = Theme.Surface,
-                ForeColor = Theme.Text, View = View.Details, FullRowSelect = true, MultiSelect = false };
-            dailyLists.Columns.Add("提取时间", 170);
-            dailyLists.Columns.Add("学习部分", 180);
-            dailyLists.Columns.Add("词数", 70);
-            dailyLists.Columns.Add("状态", 100);
-            dailyLists.Columns.Add("列表编号", 430);
-            dailyLists.DoubleClick += delegate
+            FlowLayoutPanel page = Page(tabs, "学习统计");
+            page.Controls.Add(Label("统计看板已升级为独立大窗口，包含今日、近 7 天、近 30 天和累计数据，以及正确率、首次正确率、复现次数、有效学习时长和趋势。", 1050));
+            page.Controls.Add(Label("大日历仍按凌晨 4:01 划分学习日；选择日期可查看三类学习数量，双击列表可直接打开对应记录。", 1050));
+            Button open = Button("打开学习统计", delegate
             {
-                StudyList selected = dailyLists.SelectedItems.Count > 0
-                    ? dailyLists.SelectedItems[0].Tag as StudyList : null;
-                if (selected != null) new StudyListViewerForm(selected).ShowDialog(this);
-            };
-            page.Controls.Add(dailyLists);
-            RefreshDay();
-        }
-
-        private void RefreshDay()
-        {
-            if (calendar == null) return;
-            string date = calendar.SelectedDate.ToString("yyyy-MM-dd");
-            List<StudyList> lists = store.Lists.Where(x => x.studyDate == date).ToList();
-            Func<string, int> count = kind => lists.Where(x => x.kind == kind)
-                .Sum(x => x.items.Count(y => y.firstAnsweredAt != DateTime.MinValue
-                    && StudyStore.StudyDayKey(y.firstAnsweredAt) == date));
-            int carryLists = lists.Count(x => x.kind == "new" && x.items.Any(y => y.carriedOver));
-            int carryDone = lists.Count(x => x.kind == "new" && x.status == "completed"
-                && x.items.Any(y => y.carriedOver));
-            dailySummary.Text = string.Format(
-                "{0}  新学 {1}  ·  列表复习 {2}  ·  错题/易错复习 {3}\n普通新学列表 {4} 个  ·  次日列表完成数 {5}（{6}）",
-                date, count("new"), count("list_review"), count("problem_review"),
-                lists.Count(x => x.kind == "new"), carryDone, carryLists);
-            dailyLists.Items.Clear();
-            foreach (StudyList list in lists.OrderBy(x => x.createdAt))
-            {
-                string kind = list.kind == "new" ? "新学" : list.kind == "list_review"
-                    ? "历史列表复习" : "错题与易错词复习";
-                ListViewItem row = new ListViewItem(list.createdAt.ToString("yyyy-MM-dd HH:mm:ss"));
-                row.SubItems.Add(kind);
-                row.SubItems.Add(list.items.Count.ToString());
-                row.SubItems.Add(list.status == "completed" ? "已完成" : list.status == "active" ? "进行中" : "已结算");
-                row.SubItems.Add(list.id);
-                row.Tag = list;
-                dailyLists.Items.Add(row);
-            }
+                using (StatisticsForm form = new StatisticsForm(store, practice, appearance))
+                    form.ShowDialog(this);
+            });
+            open.Width = 240; open.Height = 50;
+            page.Controls.Add(open);
         }
 
         private void BuildAppearanceTab(TabControl tabs)
@@ -555,8 +682,7 @@ namespace EnglishDictationTool
             page.Controls.Add(Button("打开外观编辑器", delegate
             {
                 using (AppearanceSettingsForm form = new AppearanceSettingsForm(appearance))
-                    if (form.ShowDialog(this) == DialogResult.OK && calendar != null)
-                        calendar.SetAppearance(appearance);
+                    form.ShowDialog(this);
             }));
         }
 
@@ -656,6 +782,7 @@ namespace EnglishDictationTool
     {
         public StudyListViewerForm(StudyList list)
         {
+            ModernUI.ApplyAppIcon(this);
             Text = "学习列表 " + list.id;
             StartPosition = FormStartPosition.CenterParent;
             ClientSize = ModernUI.FitWindow(1000, 650);
@@ -687,6 +814,7 @@ namespace EnglishDictationTool
 
         public AcceptedAnswersForm(StudyStore study, DataLoader loader)
         {
+            ModernUI.ApplyAppIcon(this);
             store = study;
             all = store.AllWords().Select(x => x.word).ToList();
             Text = "手动可接受答案";

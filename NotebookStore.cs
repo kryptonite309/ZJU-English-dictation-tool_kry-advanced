@@ -35,9 +35,11 @@ namespace EnglishDictationTool
         public string notebook { get; set; }
         public int correctCount { get; set; }
         public int exampleCorrectCount { get; set; }
+        public int dictationCorrectCount { get; set; }
         public int spellingCorrectCount { get; set; }
         public int errorCount { get; set; }
         public DateTime lastAnsweredAt { get; set; }
+        public DateTime lastEditedAt { get; set; }
     }
 
     internal sealed class NotebookState
@@ -153,6 +155,14 @@ namespace EnglishDictationTool
             return FindRecord(word);
         }
 
+        public DateTime GetLastEditedAt(WordEntry word)
+        {
+            NotebookRecord record = FindRecord(word);
+            if (record == null) return DateTime.MinValue;
+            return record.lastEditedAt == DateTime.MinValue
+                ? record.lastAnsweredAt : record.lastEditedAt;
+        }
+
         public string Snapshot()
         {
             return Serialize(state);
@@ -169,7 +179,8 @@ namespace EnglishDictationTool
         }
 
         public AnswerOutcome RecordStudyAnswer(WordEntry word, bool correct, string questionType,
-            bool firstAttempt, int exampleTarget, int spellingTarget, DateTime answeredAt)
+            bool firstAttempt, int exampleTarget, int dictationTarget, int spellingTarget,
+            DateTime answeredAt)
         {
             AnswerOutcome outcome = new AnswerOutcome { Correct = correct };
             NotebookRecord record = FindRecord(word);
@@ -180,21 +191,25 @@ namespace EnglishDictationTool
             }
             else record.word = DataLoader.MergeWordEntry(new[] { record.word, word });
             record.lastAnsweredAt = answeredAt;
+            record.lastEditedAt = answeredAt;
             if (!correct)
             {
                 record.errorCount++;
                 record.notebook = Notebooks.Wrong;
                 record.exampleCorrectCount = 0;
+                record.dictationCorrectCount = 0;
                 record.spellingCorrectCount = 0;
                 record.correctCount = 0;
             }
             else if (firstAttempt && record.notebook == Notebooks.Wrong)
             {
                 if (questionType == "example") record.exampleCorrectCount++;
+                else if (questionType == "dictation") record.dictationCorrectCount++;
                 else record.spellingCorrectCount++;
                 record.correctCount = record.spellingCorrectCount;
                 outcome.CorrectCount = record.spellingCorrectCount;
                 if (record.exampleCorrectCount >= exampleTarget
+                    && record.dictationCorrectCount >= dictationTarget
                     && record.spellingCorrectCount >= spellingTarget)
                 {
                     record.notebook = Notebooks.ErrorProne;
@@ -239,9 +254,14 @@ namespace EnglishDictationTool
                 record.errorCount++;
                 record.spellingCorrectCount = 0;
                 record.exampleCorrectCount = 0;
+                record.dictationCorrectCount = 0;
             }
 
-            if (record != null) record.lastAnsweredAt = DateTime.Now;
+            if (record != null)
+            {
+                record.lastAnsweredAt = DateTime.Now;
+                record.lastEditedAt = record.lastAnsweredAt;
+            }
 
             AddRecent(word);
             Save();
@@ -252,7 +272,15 @@ namespace EnglishDictationTool
         {
             NotebookRecord record = FindRecord(word);
             bool removed = record != null && record.notebook == Notebooks.Wrong;
-            if (removed) state.records.Remove(record);
+            if (removed)
+            {
+                record.notebook = Notebooks.None;
+                record.correctCount = 0;
+                record.exampleCorrectCount = 0;
+                record.dictationCorrectCount = 0;
+                record.spellingCorrectCount = 0;
+                record.lastEditedAt = DateTime.Now;
+            }
             AddRecent(word);
             Save();
             return removed;
@@ -269,26 +297,21 @@ namespace EnglishDictationTool
             if (!Notebooks.All.Contains(notebook)) throw new ArgumentException("未知单词本", "notebook");
 
             NotebookRecord record = FindRecord(word);
-            if (notebook == Notebooks.None)
+            if (record == null)
             {
-                if (record != null) state.records.Remove(record);
+                record = new NotebookRecord { word = word, notebook = Notebooks.None };
+                state.records.Add(record);
             }
-            else
+            else record.word = DataLoader.MergeWordEntry(new[] { record.word, word });
+            if (record.notebook != notebook)
             {
-                if (record == null)
-                {
-                    record = new NotebookRecord { word = word };
-                    state.records.Add(record);
-                }
-                else record.word = DataLoader.MergeWordEntry(new[] { record.word, word });
-                if (record.notebook != notebook) record.correctCount = 0;
-                if (record.notebook != notebook)
-                {
-                    record.spellingCorrectCount = 0;
-                    record.exampleCorrectCount = 0;
-                }
-                record.notebook = notebook;
+                record.correctCount = 0;
+                record.spellingCorrectCount = 0;
+                record.exampleCorrectCount = 0;
+                record.dictationCorrectCount = 0;
             }
+            record.notebook = notebook;
+            record.lastEditedAt = DateTime.Now;
 
             AddRecent(word);
             Save();
@@ -324,6 +347,8 @@ namespace EnglishDictationTool
                 StringComparer.OrdinalIgnoreCase);
             foreach (NotebookRecord source in state.records)
             {
+                if (source.lastEditedAt == DateTime.MinValue
+                    && source.lastAnsweredAt != DateTime.MinValue) changed = true;
                 string key = DataLoader.WordKey(source.word);
                 NotebookRecord target;
                 if (!byEnglish.TryGetValue(key, out target))
@@ -334,9 +359,12 @@ namespace EnglishDictationTool
                         notebook = source.notebook,
                         correctCount = source.correctCount,
                         exampleCorrectCount = source.exampleCorrectCount,
+                        dictationCorrectCount = source.dictationCorrectCount,
                         spellingCorrectCount = source.spellingCorrectCount,
                         errorCount = source.errorCount,
-                        lastAnsweredAt = source.lastAnsweredAt
+                        lastAnsweredAt = source.lastAnsweredAt,
+                        lastEditedAt = source.lastEditedAt == DateTime.MinValue
+                            ? source.lastAnsweredAt : source.lastEditedAt
                     };
                     byEnglish[key] = target;
                     merged.Add(target);
@@ -348,9 +376,13 @@ namespace EnglishDictationTool
                     target.notebook = source.notebook;
                 target.correctCount = Math.Max(target.correctCount, source.correctCount);
                 target.exampleCorrectCount = Math.Max(target.exampleCorrectCount, source.exampleCorrectCount);
+                target.dictationCorrectCount = Math.Max(target.dictationCorrectCount, source.dictationCorrectCount);
                 target.spellingCorrectCount = Math.Max(target.spellingCorrectCount, source.spellingCorrectCount);
                 target.errorCount += source.errorCount;
                 if (source.lastAnsweredAt > target.lastAnsweredAt) target.lastAnsweredAt = source.lastAnsweredAt;
+                DateTime sourceEdited = source.lastEditedAt == DateTime.MinValue
+                    ? source.lastAnsweredAt : source.lastEditedAt;
+                if (sourceEdited > target.lastEditedAt) target.lastEditedAt = sourceEdited;
             }
             state.records = merged;
 
