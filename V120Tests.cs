@@ -24,7 +24,9 @@ namespace EnglishDictationTool
             WordEntry apple = loader.LoadWordList("book-test", new[] { "u1" })
                 .First(x => GameEngine.CleanEnglish(x) == "apple");
 
-            DateTime now = new DateTime(2026, 9, 22, 12, 0, 0);
+            // Keep this regression fixture in the current study day. A fixed historic
+            // date is automatically settled as cross-day data before the first task.
+            DateTime now = DateTime.Now;
             notebooks.RecordStudyAnswer(apple, false, "spelling", true, 1, 1, 1, now);
             notebooks.RecordStudyAnswer(apple, true, "example", true, 1, 1, 1, now.AddSeconds(1));
             bool waitsForDictation = notebooks.GetNotebook(apple) == Notebooks.Wrong;
@@ -86,15 +88,26 @@ namespace EnglishDictationTool
                 && restoredEngine.CurrentDeck.Count == engine.CurrentDeck.Count;
 
             AppearanceStore appearance = new AppearanceStore(fixture);
-            bool pauseAppearance = appearance.Settings.backgrounds.ContainsKey("pause")
+            bool pauseAppearance = appearance.Settings.backgrounds.ContainsKey("main")
+                && appearance.Settings.backgrounds.ContainsKey("pause")
                 && appearance.Settings.backgrounds["pause_new"].inherit;
             bool backupDefault = StudySettings.Defaults().backupBeforeManualEnd;
             bool timerDefault = StudySettings.Defaults().timerEnabled
                 && StudySettings.Defaults().timerPrecision == "minute";
+            bool pauseKeyDefault = StudySettings.Defaults().pauseKey
+                == (int)System.Windows.Forms.Keys.Escape;
             string minuteTimer = LearningTimer.DisplayText(61000, "minute");
             string millisecondTimer = LearningTimer.DisplayText(3723456, "millisecond");
             bool timerDisplay = minuteTimer.Contains("\r\n1 分钟")
                 && millisecondTimer.Contains("\r\n01:02:03.456");
+            StudySettings legacyShortcutSettings = new JavaScriptSerializer()
+                .Deserialize<StudySettings>(new JavaScriptSerializer().Serialize(reloaded.Settings));
+            legacyShortcutSettings.pauseKey = (int)(System.Windows.Forms.Keys.Control
+                | System.Windows.Forms.Keys.Shift | System.Windows.Forms.Keys.P);
+            reloaded.UpdateSettings(legacyShortcutSettings);
+            StudyStore shortcutMigrated = new StudyStore(fixture, loader, notebooks);
+            bool legacyPauseKeyMigrated = shortcutMigrated.Settings.pauseKey
+                == (int)System.Windows.Forms.Keys.Escape;
             string updateFolder = Path.Combine(fixture, "update-test");
             Directory.CreateDirectory(updateFolder);
             string updateSource = Path.Combine(updateFolder, "new.exe");
@@ -119,7 +132,8 @@ namespace EnglishDictationTool
                 { "ok", difference && tripleThreshold && progressPreview && dictationFirst
                     && wrongDoesNotAdvance && spellingAdvances && pauseRestored
                     && settingsAppliedWhilePaused && completedProgress && durationSaved && practiceRestored
-                    && pauseAppearance && backupDefault && timerDefault && timerDisplay },
+                    && pauseAppearance && backupDefault && timerDefault && timerDisplay
+                    && pauseKeyDefault && legacyPauseKeyMigrated },
                 { "spellingDifference", difference }, { "tripleThreshold", tripleThreshold },
                 { "dictationFirst", dictationFirst }, { "wrongDoesNotAdvance", wrongDoesNotAdvance },
                 { "progress", completedProgress }, { "pauseRestored", pauseRestored },
@@ -127,6 +141,8 @@ namespace EnglishDictationTool
                 { "durationSaved", durationSaved }, { "practiceRestored", practiceRestored },
                 { "pauseAppearance", pauseAppearance }, { "backupDefault", backupDefault },
                 { "timerDefault", timerDefault }, { "timerDisplay", timerDisplay },
+                { "pauseKeyDefault", pauseKeyDefault },
+                { "legacyPauseKeyMigrated", legacyPauseKeyMigrated },
                 { "updaterReplace", updaterReplace },
                 { "updaterRollback", updaterRollback }
             };

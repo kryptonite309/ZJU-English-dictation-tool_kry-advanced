@@ -19,7 +19,9 @@ namespace EnglishDictationTool
         private readonly PracticeStore practice;
         private readonly PronunciationStore pronunciation;
         private readonly Panel freePracticePanel;
+        private readonly Action<StudySettings, bool> collectFreeSettings;
         private TabControl tabs;
+        private Button persistentSaveButton;
         private readonly StudySettings draft;
         private readonly PronunciationSettings pronunciationDraft;
         private readonly Dictionary<string, NumericUpDown> quotas = new Dictionary<string, NumericUpDown>();
@@ -47,23 +49,32 @@ namespace EnglishDictationTool
         private ComboBox managedBook;
         private TextBox renamedBook, importPath, importBook, importUnit;
         private Label managedBookSummary;
+        private readonly Dictionary<string, Control> guideTargets =
+            new Dictionary<string, Control>();
+        private readonly Dictionary<string, string> guideTabs =
+            new Dictionary<string, string>();
+
+        internal event Action<string> GuideTabSelected;
+        internal event Func<string, bool> GuideActionRequested;
 
         public StudySettingsForm(StudyStore study, NotebookStore notebookStore,
             DataLoader dataLoader, BackupService backupService, AppearanceStore appearanceStore,
-            Panel freeSettingsPanel = null)
+            Panel freeSettingsPanel = null,
+            Action<StudySettings, bool> freeSettingsCollector = null)
         {
             ModernUI.ApplyAppIcon(this);
             store = study; notebooks = notebookStore; loader = dataLoader; backups = backupService;
             appearance = appearanceStore;
             practice = new PracticeStore(AppPaths.FindProjectRoot());
             freePracticePanel = freeSettingsPanel;
+            collectFreeSettings = freeSettingsCollector;
             draft = new JavaScriptSerializer().Deserialize<StudySettings>(
                 new JavaScriptSerializer().Serialize(store.Settings));
             pronunciation = new PronunciationStore(AppPaths.FindProjectRoot());
             pronunciationDraft = new JavaScriptSerializer().Deserialize<PronunciationSettings>(
                 new JavaScriptSerializer().Serialize(pronunciation.Settings));
             if (draft.defaultBookCounts == null) draft.defaultBookCounts = new Dictionary<string, int>();
-            Text = "大英默写器 · 设置";
+            Text = "大英默写器  设置";
             StartPosition = FormStartPosition.CenterParent;
             ClientSize = ModernUI.FitWindow(1450, 900);
             MinimumSize = new Size(1080, 690);
@@ -71,8 +82,25 @@ namespace EnglishDictationTool
             ForeColor = Theme.Text;
             Font = Theme.UiFont;
 
+            TableLayoutPanel shell = new TableLayoutPanel { Dock = DockStyle.Fill,
+                ColumnCount = 1, RowCount = 2, BackColor = Theme.Background,
+                Margin = Padding.Empty, Padding = Padding.Empty };
+            shell.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100f));
+            shell.RowStyles.Add(new RowStyle(SizeType.Percent, 100f));
+            shell.RowStyles.Add(new RowStyle(SizeType.Absolute, 72f));
             tabs = new ModernTabControl { Dock = DockStyle.Fill };
-            Controls.Add(tabs);
+            shell.Controls.Add(tabs, 0, 0);
+            FlowLayoutPanel saveBar = new FlowLayoutPanel { Dock = DockStyle.Fill,
+                FlowDirection = FlowDirection.RightToLeft, WrapContents = false,
+                BackColor = Theme.Background, Padding = new Padding(18, 10, 20, 10) };
+            persistentSaveButton = Button("保存设置", delegate { SaveSettings(); });
+            persistentSaveButton.Width = 210;
+            persistentSaveButton.Height = 48;
+            persistentSaveButton.Margin = new Padding(8, 0, 0, 0);
+            ((ModernButton)persistentSaveButton).Primary = true;
+            saveBar.Controls.Add(persistentSaveButton);
+            shell.Controls.Add(saveBar, 0, 1);
+            Controls.Add(shell);
             if (freePracticePanel != null)
             {
                 TabPage freePage = new TabPage("自由练习")
@@ -93,6 +121,11 @@ namespace EnglishDictationTool
             BuildAppearanceTab(tabs);
             BuildCalendarTab(tabs);
             BuildBackupTab(tabs);
+            tabs.SelectedIndexChanged += delegate
+            {
+                if (GuideTabSelected != null && tabs.SelectedTab != null)
+                    GuideTabSelected(tabs.SelectedTab.Text);
+            };
             Theme.Apply(this);
         }
 
@@ -100,6 +133,58 @@ namespace EnglishDictationTool
         {
             TabPage page = tabs.TabPages.Cast<TabPage>().FirstOrDefault(x => x.Text.Contains(title));
             if (page != null) tabs.SelectedTab = page;
+        }
+
+        internal bool HasPersistentSaveButtonForTests()
+        {
+            return persistentSaveButton != null && persistentSaveButton.Parent != null
+                && !(persistentSaveButton.Parent is TabPage);
+        }
+
+        internal Rectangle GuideTabScreen(string title)
+        {
+            for (int index = 0; index < tabs.TabPages.Count; index++)
+            {
+                if (!tabs.TabPages[index].Text.Contains(title)) continue;
+                Rectangle tab = tabs.GetTabRect(index);
+                return tabs.RectangleToScreen(tab);
+            }
+            return Rectangle.Empty;
+        }
+
+        private bool RequestGuideAction(string key)
+        {
+            return GuideActionRequested != null && GuideActionRequested(key);
+        }
+
+        private void RegisterGuideTarget(string key, string tab, Control control)
+        {
+            guideTargets[key] = control;
+            guideTabs[key] = tab;
+        }
+
+        internal Rectangle SelectGuideTarget(string key)
+        {
+            string tab;
+            if (guideTabs.TryGetValue(key, out tab)) SelectTab(tab);
+            Control target;
+            if (!guideTargets.TryGetValue(key, out target) || target == null)
+                return Rectangle.Empty;
+            Control parent = target.Parent;
+            while (parent != null && !(parent is ScrollableControl)) parent = parent.Parent;
+            ScrollableControl scrollable = parent as ScrollableControl;
+            if (scrollable != null) scrollable.ScrollControlIntoView(target);
+            target.Update();
+            return GuideTargetScreen(key);
+        }
+
+        internal Rectangle GuideTargetScreen(string key)
+        {
+            Control target;
+            if (!guideTargets.TryGetValue(key, out target) || target == null
+                || target.IsDisposed || !target.Visible)
+                return Rectangle.Empty;
+            return target.RectangleToScreen(target.ClientRectangle);
         }
 
         public void DetachFreeSettings()
@@ -129,6 +214,28 @@ namespace EnglishDictationTool
             return flow;
         }
 
+        private static FlowLayoutPanel Section(FlowLayoutPanel page, string title,
+            string description, int height)
+        {
+            ModernGroupBox group = new ModernGroupBox { Text = title, Width = 635,
+                Height = height, Margin = new Padding(8), Padding = new Padding(12),
+                BackColor = ModernUI.Card, ForeColor = Theme.Text };
+            FlowLayoutPanel body = new FlowLayoutPanel { Location = new Point(15, 35),
+                Width = 603, Height = Math.Max(80, height - 50),
+                FlowDirection = FlowDirection.TopDown, WrapContents = false, AutoScroll = true,
+                BackColor = ModernUI.Card, Padding = new Padding(4) };
+            if (!string.IsNullOrWhiteSpace(description))
+            {
+                Label intro = Label(description, 570);
+                intro.ForeColor = Theme.MutedText;
+                intro.BackColor = ModernUI.Card;
+                body.Controls.Add(intro);
+            }
+            group.Controls.Add(body);
+            page.Controls.Add(group);
+            return body;
+        }
+
         private static Label Label(string text, int width)
         {
             int measured = TextRenderer.MeasureText(text ?? string.Empty, Theme.UiFont,
@@ -140,10 +247,10 @@ namespace EnglishDictationTool
 
         private static Panel Row(string label, Control input, int labelWidth)
         {
-            labelWidth = Math.Max(420, labelWidth);
+            labelWidth = Math.Max(300, labelWidth);
             Label title = Label(label, labelWidth);
-            Panel row = new Panel { Width = Math.Max(900, labelWidth + input.Width + 20),
-                Height = Math.Max(title.Height + 8, input.Height + 12), BackColor = Theme.Background };
+            Panel row = new Panel { Width = Math.Max(570, labelWidth + input.Width + 20),
+                Height = Math.Max(title.Height + 8, input.Height + 12), BackColor = ModernUI.Card };
             title.Location = new Point(0, 4);
             input.Location = new Point(labelWidth + 8, Math.Max(4, (row.Height - input.Height) / 2));
             row.Controls.Add(title);
@@ -160,15 +267,15 @@ namespace EnglishDictationTool
         private static CheckBox Check(string text, bool value)
         {
             int measured = TextRenderer.MeasureText(text ?? string.Empty, Theme.UiFont,
-                new Size(760, int.MaxValue), TextFormatFlags.WordBreak).Height;
-            return new CheckBox { Text = text, Checked = value, Width = 800,
+                new Size(560, int.MaxValue), TextFormatFlags.WordBreak).Height;
+            return new CheckBox { Text = text, Checked = value, Width = 570,
                 Height = Math.Max(38, measured + 9),
-                BackColor = Theme.Background, ForeColor = Theme.Text };
+                BackColor = ModernUI.Card, ForeColor = Theme.Text };
         }
 
         private static Button Button(string text, EventHandler click)
         {
-            Button button = new ModernButton { Text = text, Width = 175, Height = 40 };
+            Button button = new ModernButton { Text = text, Width = 175, Height = 46 };
             button.Click += click;
             return button;
         }
@@ -176,29 +283,40 @@ namespace EnglishDictationTool
         private void BuildPlanTab(TabControl tabs)
         {
             FlowLayoutPanel page = Page(tabs, "每日计划");
-            page.Controls.Add(Label("三个部分可分别进入；完成后再次进入会抽取下一批。", 800));
+            page.FlowDirection = FlowDirection.LeftToRight;
+            page.WrapContents = true;
+            page.Padding = new Padding(14);
+            FlowLayoutPanel quantities = Section(page, "每日学习目标",
+                "三个部分可以分别进入；完成后再次进入会抽取下一批。", 318);
+            RegisterGuideTarget("daily_plan", "每日计划", quantities.Parent);
             a = Number(draft.newCount, 0, 10000);
             b = Number(draft.listCount, 0, 10000);
             c = Number(draft.problemCount, 0, 10000);
-            page.Controls.Add(Row("每日新学词数（建议 20）", a, 320));
-            page.Controls.Add(Row("历史列表复习数量（建议 4）", b, 320));
-            page.Controls.Add(Row("错题与易错词复习数量（建议 15）", c, 320));
+            quantities.Controls.Add(Row("每日新学词数（建议 20）", a, 360));
+            quantities.Controls.Add(Row("历史列表复习数量（建议 4）", b, 360));
+            quantities.Controls.Add(Row("错题与易错词复习数量（建议 15）", c, 360));
             random = Check("随机跨单元抽取（关闭时按书本和单元顺序）", draft.randomExtraction);
             overlap = Check("同一词允许当天同时进入列表复习与错题复习", draft.allowOverlap);
             carryCount = Check("跨日优先词计入每日新学词数", draft.carryOverCountsInNewCount);
             carryPreview = Check("跨日优先词重新展示单词、例句和释义", draft.carryOverPreview);
-            page.Controls.Add(random); page.Controls.Add(overlap);
-            page.Controls.Add(carryCount); page.Controls.Add(carryPreview);
-            page.Controls.Add(Label("默认按书本配额（抽取前仍可逐次调整；旁边显示未提取余量）：", 800));
+            FlowLayoutPanel rules = Section(page, "抽取与跨日规则",
+                "保持单元顺序时会从当前单元继续向后抽取。", 318);
+            rules.Controls.Add(random); rules.Controls.Add(overlap);
+            rules.Controls.Add(carryCount); rules.Controls.Add(carryPreview);
+            FlowLayoutPanel quotaSection = Section(page, "默认词书配额",
+                "抽取前仍可逐次调整；名称旁显示尚未提取的余量。", 245);
             Dictionary<string, int> available = store.AvailableCounts();
             foreach (string book in loader.GetAvailableBooks())
             {
                 int current = draft.defaultBookCounts.ContainsKey(book) ? draft.defaultBookCounts[book] : 0;
                 NumericUpDown count = Number(current, 0, 10000);
                 quotas.Add(book, count);
-                page.Controls.Add(Row(book + " · 可抽 " + (available.ContainsKey(book) ? available[book] : 0), count, 320));
+                quotaSection.Controls.Add(Row(book + "  可抽 "
+                    + (available.ContainsKey(book) ? available[book] : 0), count, 360));
             }
-            page.Controls.Add(Button("保存设置", delegate { SaveSettings(); }));
+            Button save = Button("保存每日计划", delegate { SaveSettings(); });
+            ((ModernButton)save).Primary = true;
+            quotaSection.Controls.Add(save);
         }
 
         private void BuildAnswerTab(TabControl tabs)
@@ -253,8 +371,21 @@ namespace EnglishDictationTool
             page.Controls.Add(fuzzy); page.Controls.Add(reviewFirstLetter); page.Controls.Add(dueOnly);
             days = new TextBox { Width = 400, Text = string.Join(",", draft.reviewDays ?? new[] { 1, 3, 7, 14 }) };
             page.Controls.Add(Row("复习间隔天数（逗号分隔）", days, 320));
-            page.Controls.Add(Button("管理可接受答案", delegate { new AcceptedAnswersForm(store, loader).ShowDialog(this); }));
-            page.Controls.Add(Button("管理全部单词本", delegate { new NotebookManagerForm(loader, notebooks).ShowDialog(this); }));
+            RegisterGuideTarget("question_types", "答题与归档", newTaskOrder.Parent);
+            Button acceptedAnswers = Button("管理可接受答案", delegate
+            {
+                if (RequestGuideAction("accepted_answers")) return;
+                new AcceptedAnswersForm(store, loader).ShowDialog(this);
+            });
+            Button manageNotebooks = Button("管理全部单词本", delegate
+            {
+                if (RequestGuideAction("notebooks")) return;
+                new NotebookManagerForm(loader, notebooks).ShowDialog(this);
+            });
+            page.Controls.Add(acceptedAnswers);
+            page.Controls.Add(manageNotebooks);
+            RegisterGuideTarget("accepted_answers", "答题与归档", acceptedAnswers);
+            RegisterGuideTarget("notebooks", "答题与归档", manageNotebooks);
             page.Controls.Add(Button("保存设置", delegate { SaveSettings(); }));
         }
 
@@ -373,7 +504,7 @@ namespace EnglishDictationTool
             }
             List<string> units = loader.GetUnitsForBook(book);
             int words = loader.LoadWordList(book, units).Count;
-            managedBookSummary.Text = book + " · " + units.Count + " 个单元 · " + words + " 个词条";
+            managedBookSummary.Text = book + "  " + units.Count + " 个单元  " + words + " 个词条";
         }
 
         private void ChooseImportCsv()
@@ -441,15 +572,26 @@ namespace EnglishDictationTool
             catch (Exception error) { MessageBox.Show(this, error.Message, "重命名失败"); }
         }
 
-        private TextBox Shortcut(int key, bool allowPlain)
+        private TextBox Shortcut(int key, bool allowPlain, bool allowEscape = false)
         {
             TextBox capture = new TextBox { ReadOnly = true, Width = 240,
                 Text = new KeysConverter().ConvertToString((Keys)key) };
+            capture.PreviewKeyDown += delegate(object sender, PreviewKeyDownEventArgs e)
+            {
+                if (allowEscape && e.KeyCode == Keys.Escape) e.IsInputKey = true;
+            };
             capture.KeyDown += delegate(object sender, KeyEventArgs e)
             {
                 e.SuppressKeyPress = true;
                 if (e.KeyCode == Keys.ControlKey || e.KeyCode == Keys.ShiftKey
-                    || e.KeyCode == Keys.Menu || e.KeyCode == Keys.Escape) return;
+                    || e.KeyCode == Keys.Menu) return;
+                if (e.KeyCode == Keys.Escape)
+                {
+                    if (!allowEscape) return;
+                    capture.Tag = (int)Keys.Escape;
+                    capture.Text = new KeysConverter().ConvertToString(Keys.Escape);
+                    return;
+                }
                 if (!allowPlain && (e.KeyData & Keys.Modifiers) == Keys.None)
                 {
                     MessageBox.Show(this, "此快捷键需包含 Ctrl、Alt 或 Shift，以免误触发。", "快捷键");
@@ -473,26 +615,28 @@ namespace EnglishDictationTool
             masteryKey = Shortcut((int)notebooks.MasteryShortcut, false);
             undoKey = Shortcut(draft.undoKey, false);
             backupKey = Shortcut(draft.manualBackupKey, false);
-            pauseKey = Shortcut(draft.pauseKey, false);
-            page.Controls.Add(Row("展示下一层", previewKey, 320));
+            pauseKey = Shortcut(draft.pauseKey, true, true);
+            Panel shortcutGuideRow = Row("展示下一层", previewKey, 320);
+            page.Controls.Add(shortcutGuideRow);
             page.Controls.Add(Row("例句提示 / 提交（默认 Enter）", exampleHintKey, 320));
             page.Controls.Add(Row("翻到上一页（默认 Shift+Q）", previousPageKey, 320));
             page.Controls.Add(Row("翻到下一页（默认 Shift+E）", nextPageKey, 320));
             page.Controls.Add(Row("斩当前词", masteryKey, 320));
             page.Controls.Add(Row("撤销上一个词", undoKey, 320));
             page.Controls.Add(Row("手动备份", backupKey, 320));
-            page.Controls.Add(Row("暂停 / 继续（默认 Ctrl+Shift+P）", pauseKey, 320));
+            page.Controls.Add(Row("暂停 / 继续（默认 Esc）", pauseKey, 320));
+            RegisterGuideTarget("study_controls", "快捷键", shortcutGuideRow);
             undoLimit = Number(draft.undoLimit, 0, 5);
             backupMinutes = Number(draft.autoBackupMinutes, 1, 1440);
             backupKeep = Number(draft.autoBackupKeep, 1, 100);
             page.Controls.Add(Row("保留撤销步数（最多 5）", undoLimit, 320));
-            page.Controls.Add(Row("自动备份间隔 · 分钟（默认 10）", backupMinutes, 320));
+            page.Controls.Add(Row("自动备份间隔（分钟，默认 10）", backupMinutes, 320));
             page.Controls.Add(Row("自动备份最多保留份数（默认 6）", backupKeep, 320));
             backupBeforeEnd = Check("手动结束列表前自动创建一份手动备份（默认开启）",
                 draft.backupBeforeManualEnd);
             timerEnabled = Check("学习页面显示并记录计时器（默认开启）", draft.timerEnabled);
             timerPrecision = new DarkComboBox { Width = 300 };
-            timerPrecision.Items.AddRange(new object[] { "精确到分钟", "速通计时 · 毫秒" });
+            timerPrecision.Items.AddRange(new object[] { "精确到分钟", "速通计时（毫秒）" });
             timerPrecision.SelectedIndex = draft.timerPrecision == "millisecond" ? 1 : 0;
             page.Controls.Add(backupBeforeEnd);
             page.Controls.Add(timerEnabled);
@@ -646,6 +790,9 @@ namespace EnglishDictationTool
                 draft.timerPrecision = timerPrecision.SelectedIndex == 1 ? "millisecond" : "minute";
                 draft.checkUpdatesOnStartup = updateOnStartup.Checked;
                 draft.defaultBookCounts = quotas.ToDictionary(x => x.Key, x => (int)x.Value.Value);
+                if (collectFreeSettings != null)
+                    collectFreeSettings(draft, tabs.SelectedTab != null
+                        && tabs.SelectedTab.Text == "自由练习");
                 store.UpdateSettings(draft);
                 notebooks.MasteryShortcut = (Keys)masteryValue;
                 notebooks.ReviewFirstLetter = reviewFirstLetter.Checked;
@@ -667,31 +814,36 @@ namespace EnglishDictationTool
             page.Controls.Add(Label("大日历仍按凌晨 4:01 划分学习日；选择日期可查看三类学习数量，双击列表可直接打开对应记录。", 1050));
             Button open = Button("打开学习统计", delegate
             {
+                if (RequestGuideAction("statistics")) return;
                 using (StatisticsForm form = new StatisticsForm(store, practice, appearance))
                     form.ShowDialog(this);
             });
             open.Width = 240; open.Height = 50;
             page.Controls.Add(open);
+            RegisterGuideTarget("statistics", "学习统计", open);
         }
 
         private void BuildAppearanceTab(TabControl tabs)
         {
             FlowLayoutPanel page = Page(tabs, "外观");
             page.Controls.Add(Label("单词、例句、释义及三种反馈可分别设字体、字号和颜色。", 850));
-            page.Controls.Add(Label("四类练习和日历的背景各自独立，可选纯色或导入图片。", 850));
-            page.Controls.Add(Button("打开外观编辑器", delegate
+            page.Controls.Add(Label("主界面、四类练习和日历的背景各自独立，可选纯色或导入图片。", 850));
+            Button openAppearance = Button("打开外观编辑器", delegate
             {
+                if (RequestGuideAction("appearance")) return;
                 using (AppearanceSettingsForm form = new AppearanceSettingsForm(appearance))
                     form.ShowDialog(this);
-            }));
+            });
+            page.Controls.Add(openAppearance);
+            RegisterGuideTarget("appearance", "外观", openAppearance);
         }
 
         private void BuildBackupTab(TabControl tabs)
         {
             FlowLayoutPanel page = Page(tabs, "备份");
             page.Controls.Add(Label("手动备份独立存放、无数量限制；恢复前会再保存一份当前完整数据。", 800));
-            backupList = new ListView { Width = 1100, Height = 430, View = View.Details,
-                FullRowSelect = true, MultiSelect = false, BackColor = Theme.Surface,
+            backupList = new ModernListView { Width = 1100, Height = 430, View = View.Details,
+                FullRowSelect = true, MultiSelect = false, BackColor = ModernUI.Card,
                 ForeColor = Theme.Text, ShowItemToolTips = true };
             backupList.Columns.Add("类型", 100); backupList.Columns.Add("创建时间", 230);
             backupList.Columns.Add("文件数", 95); backupList.Columns.Add("备份编号", 300);

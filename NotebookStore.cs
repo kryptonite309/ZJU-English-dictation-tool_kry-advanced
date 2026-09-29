@@ -450,7 +450,7 @@ namespace EnglishDictationTool
                 version = 1,
                 reviewFirstLetter = true,
                 reviewCorrectTarget = 3,
-                masteryShortcut = (int)(Keys.Control | Keys.Shift | Keys.M),
+                masteryShortcut = (int)(Keys.Alt | Keys.J),
                 records = new List<NotebookRecord>(),
                 recent = new List<WordEntry>()
             };

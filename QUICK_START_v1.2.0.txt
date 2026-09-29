@@ -1,0 +1,12 @@
+大英默写器 KRY 增强版 v1.2.0 使用说明
+
+1. 先把压缩包完整解压到一个自己有写入权限的文件夹，不要直接在压缩包内运行。
+2. 保持 main.exe 与 data 文件夹位于同一层。
+3. 双击 main.exe 启动。程序会在当前文件夹保存学习记录、设置和备份。
+4. 顶部“设置”中可以调整每日计划、题型与顺序、快捷键、朗读、更新、外观、统计和备份。
+5. 听写依赖 Windows 本机英语语音。若未安装，程序会提示打开系统语音设置或仅在本次临时关闭听写。
+6. 默认暂停快捷键为 Ctrl+Shift+P，默认上一页/下一页为 Shift+Q / Shift+E。
+7. 单词只有在你手动执行“斩”后才会进入已掌握。
+
+项目地址：https://github.com/kryptonite309/ZJU-English-dictation-tool_kry-advanced
+反馈地址：https://github.com/kryptonite309/ZJU-English-dictation-tool_kry-advanced/issues

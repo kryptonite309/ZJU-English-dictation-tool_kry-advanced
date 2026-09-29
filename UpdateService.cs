@@ -26,7 +26,7 @@ namespace EnglishDictationTool
 
     internal sealed class UpdateService
     {
-        public const string CurrentVersion = "1.2.0";
+        public const string CurrentVersion = "1.3.5";
         private const string ReleasesApi = "https://api.github.com/repos/kryptonite309/ZJU-English-dictation-tool_kry-advanced/releases/latest";
         private readonly string root;
         private readonly BackupService backups;
@@ -36,6 +36,7 @@ namespace EnglishDictationTool
 
         public void CheckAsync(Form owner, bool silentNetworkErrors)
         {
+            if (File.Exists(Path.Combine(root, "isolated-build.txt"))) return;
             ThreadPool.QueueUserWorkItem(delegate
             {
                 ReleaseUpdate update = null;

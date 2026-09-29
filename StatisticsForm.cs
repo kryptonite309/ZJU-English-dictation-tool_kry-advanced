@@ -164,6 +164,7 @@ namespace EnglishDictationTool
         private readonly StudyCalendarView calendar;
         private readonly Label dailySummary;
         private readonly ListView dailyLists;
+        private readonly TabControl tabs;
         private readonly List<ModernButton> rangeButtons = new List<ModernButton>();
         private string range = "today";
 
@@ -202,14 +203,14 @@ namespace EnglishDictationTool
                 ranges.Controls.Add(button);
             }
             shell.Controls.Add(ranges, 0, 0);
-            TabControl tabs = new ModernTabControl { Dock = DockStyle.Fill };
+            tabs = new ModernTabControl { Dock = DockStyle.Fill };
             shell.Controls.Add(tabs, 0, 1);
 
             TabPage overview = new TabPage("概览与趋势") { BackColor = Theme.Background };
             tabs.TabPages.Add(overview);
             TableLayoutPanel overviewLayout = new TableLayoutPanel { Dock = DockStyle.Fill,
                 RowCount = 2, ColumnCount = 1, Padding = new Padding(12), BackColor = Theme.Background };
-            overviewLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, 360));
+            overviewLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, 286));
             overviewLayout.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
             overview.Controls.Add(overviewLayout);
             cards = new FlowLayoutPanel { Dock = DockStyle.Fill, AutoScroll = true,
@@ -222,21 +223,23 @@ namespace EnglishDictationTool
             tabs.TabPages.Add(calendarPage);
             TableLayoutPanel calendarLayout = new TableLayoutPanel { Dock = DockStyle.Fill,
                 RowCount = 3, ColumnCount = 1, Padding = new Padding(12), BackColor = Theme.Background };
-            calendarLayout.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
-            calendarLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, 86));
-            calendarLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, 220));
+            calendarLayout.RowStyles.Add(new RowStyle(SizeType.Percent, 80));
+            calendarLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, 50));
+            calendarLayout.RowStyles.Add(new RowStyle(SizeType.Percent, 20));
             calendarPage.Controls.Add(calendarLayout);
             calendar = new StudyCalendarView(store, appearance) { Dock = DockStyle.Fill };
             calendar.SelectedDateChanged += delegate { RefreshDay(); };
             calendarLayout.Controls.Add(calendar, 0, 0);
-            dailySummary = new Label { Dock = DockStyle.Fill, Font = new Font("Microsoft YaHei UI", 11,
-                FontStyle.Bold), ForeColor = Theme.Text, TextAlign = ContentAlignment.MiddleLeft };
+            dailySummary = new Label { Dock = DockStyle.Fill, Font = new Font("Segoe UI", 11,
+                FontStyle.Bold), ForeColor = Theme.Text, TextAlign = ContentAlignment.MiddleLeft,
+                Padding = new Padding(8, 4, 8, 4) };
             calendarLayout.Controls.Add(dailySummary, 0, 1);
-            dailyLists = new ListView { Dock = DockStyle.Fill, BackColor = Theme.Surface,
+            dailyLists = new ModernListView { Dock = DockStyle.Fill, BackColor = ModernUI.Card,
                 ForeColor = Theme.Text, View = View.Details, FullRowSelect = true, MultiSelect = false };
             dailyLists.Columns.Add("提取时间", 185); dailyLists.Columns.Add("学习部分", 210);
             dailyLists.Columns.Add("词数", 80); dailyLists.Columns.Add("用时", 90);
             dailyLists.Columns.Add("状态", 110); dailyLists.Columns.Add("列表编号", 440);
+            dailyLists.Resize += delegate { ResizeDailyListColumns(); };
             dailyLists.DoubleClick += delegate
             {
                 StudyList selected = dailyLists.SelectedItems.Count == 0 ? null
@@ -245,7 +248,25 @@ namespace EnglishDictationTool
             };
             calendarLayout.Controls.Add(dailyLists, 0, 2);
             Theme.Apply(this);
-            RefreshOverview(); RefreshDay();
+            RefreshOverview(); RefreshDay(); ResizeDailyListColumns();
+        }
+
+        internal void SelectCalendarForTests()
+        {
+            tabs.SelectedIndex = 1;
+            ResizeDailyListColumns();
+        }
+
+        private void ResizeDailyListColumns()
+        {
+            if (dailyLists == null || dailyLists.Columns.Count < 6
+                || dailyLists.ClientSize.Width <= 0) return;
+            int[] widths = { 185, 210, 80, 90, 110 };
+            for (int index = 0; index < widths.Length; index++)
+                dailyLists.Columns[index].Width = widths[index];
+            int used = widths.Sum();
+            int available = Math.Max(0, dailyLists.ClientSize.Width - 1);
+            dailyLists.Columns[5].Width = Math.Max(260, available - used);
         }
 
         private void RefreshOverview()
@@ -269,9 +290,9 @@ namespace EnglishDictationTool
 
         private void AddCard(string title, string value, string detail)
         {
-            ModernCard card = new ModernCard { Width = 330, Height = 150, Margin = new Padding(8),
-                Eyebrow = title, Title = value, Detail = detail };
-            cards.Controls.Add(card);
+            ModernMetric metric = new ModernMetric { Width = 330, Height = 124,
+                Margin = new Padding(8), Caption = title, Value = value, Detail = detail };
+            cards.Controls.Add(metric);
         }
 
         private void RefreshDay()
@@ -281,9 +302,9 @@ namespace EnglishDictationTool
             Func<string, int> count = kind => lists.Where(x => x.kind == kind)
                 .Sum(x => x.items.Count(y => y.firstAnsweredAt != DateTime.MinValue
                     && StudyStore.StudyDayKey(y.firstAnsweredAt) == date));
-            dailySummary.Text = date + "    新学 " + count("new") + "  ·  列表复习 "
-                + count("list_review") + "  ·  错题复习 " + count("problem_review")
-                + "  ·  新学列表 " + lists.Count(x => x.kind == "new") + " 个";
+            dailySummary.Text = date + "    新学 " + count("new") + "    列表复习 "
+                + count("list_review") + "    错题复习 " + count("problem_review")
+                + "    新学列表 " + lists.Count(x => x.kind == "new") + " 个";
             dailyLists.Items.Clear();
             foreach (StudyList list in lists)
             {

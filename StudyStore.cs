@@ -26,6 +26,11 @@ namespace EnglishDictationTool
         public bool freeExample { get; set; }
         public bool freeDictation { get; set; }
         public bool freeSpelling { get; set; }
+        public string freeBook { get; set; }
+        public List<string> freeUnits { get; set; }
+        public string freeContentMode { get; set; }
+        public bool freeShowFirstLetter { get; set; }
+        public bool freeRetryOnWrong { get; set; }
         public List<string> newTaskOrder { get; set; }
         public List<string> listTaskOrder { get; set; }
         public List<string> problemTaskOrder { get; set; }
@@ -70,6 +75,9 @@ namespace EnglishDictationTool
                 listExample = false, listDictation = false, listSpelling = true,
                 problemExample = false, problemDictation = false, problemSpelling = true,
                 freeExample = false, freeDictation = false, freeSpelling = true,
+                freeBook = string.Empty, freeUnits = new List<string>(),
+                freeContentMode = "all", freeShowFirstLetter = false,
+                freeRetryOnWrong = true,
                 newTaskOrder = DefaultTaskOrder(), listTaskOrder = DefaultTaskOrder(),
                 problemTaskOrder = DefaultTaskOrder(), freeTaskOrder = DefaultTaskOrder(),
                 newQuestionOrder = "sequential", listQuestionOrder = "sequential",
@@ -80,8 +88,7 @@ namespace EnglishDictationTool
                 carryOverPreview = true,
                 exampleCorrectTarget = 0, dictationCorrectTarget = 0, spellingCorrectTarget = 3,
                 backupBeforeManualEnd = true, timerEnabled = true, timerPrecision = "minute",
-                pauseKey = (int)(System.Windows.Forms.Keys.Control | System.Windows.Forms.Keys.Shift
-                    | System.Windows.Forms.Keys.P),
+                pauseKey = (int)System.Windows.Forms.Keys.Escape,
                 checkUpdatesOnStartup = true,
                 undoLimit = 5, autoBackupMinutes = 10, autoBackupKeep = 6,
                 reviewDays = new[] { 1, 3, 7, 14 },
@@ -165,6 +172,7 @@ namespace EnglishDictationTool
         public int pausedPreviewReviewIndex { get; set; }
         public int pausedQuizReviewIndex { get; set; }
         public long activeMilliseconds { get; set; }
+        public AnswerFeedback feedback { get; set; }
     }
 
     internal sealed class StudyUndo
@@ -227,6 +235,7 @@ namespace EnglishDictationTool
             loader = dataLoader;
             notebooks = notebookStore;
             bool legacyTaskCounts = false;
+            bool settingsMigrated = false;
             if (File.Exists(statePath))
             {
                 string stateJson = File.ReadAllText(statePath, Encoding.UTF8);
@@ -248,15 +257,21 @@ namespace EnglishDictationTool
                     state.settings.dictationMeaningHint = true;
                 if (stateJson.IndexOf("\"freeSpelling\"", StringComparison.Ordinal) < 0)
                     state.settings.freeSpelling = true;
+                if (stateJson.IndexOf("\"freeRetryOnWrong\"", StringComparison.Ordinal) < 0)
+                    state.settings.freeRetryOnWrong = true;
                 if (stateJson.IndexOf("\"backupBeforeManualEnd\"", StringComparison.Ordinal) < 0)
                     state.settings.backupBeforeManualEnd = true;
                 if (stateJson.IndexOf("\"timerEnabled\"", StringComparison.Ordinal) < 0)
                     state.settings.timerEnabled = true;
                 if (stateJson.IndexOf("\"checkUpdatesOnStartup\"", StringComparison.Ordinal) < 0)
                     state.settings.checkUpdatesOnStartup = true;
-                if (state.settings.pauseKey == 0)
-                    state.settings.pauseKey = (int)(System.Windows.Forms.Keys.Control
-                        | System.Windows.Forms.Keys.Shift | System.Windows.Forms.Keys.P);
+                int legacyPauseKey = (int)(System.Windows.Forms.Keys.Control
+                    | System.Windows.Forms.Keys.Shift | System.Windows.Forms.Keys.P);
+                if (state.settings.pauseKey == 0 || state.settings.pauseKey == legacyPauseKey)
+                {
+                    state.settings.pauseKey = (int)System.Windows.Forms.Keys.Escape;
+                    settingsMigrated = true;
+                }
                 NormalizeSettings(state.settings);
                 legacyTaskCounts = stateJson.IndexOf("\"notebookCounted\"",
                     StringComparison.Ordinal) < 0;
@@ -290,7 +305,7 @@ namespace EnglishDictationTool
                 Save();
             }
             if (legacyTaskCounts) MarkExistingHistoryCounted(state);
-            if (NormalizeDuplicateWords(state) || legacyTaskCounts)
+            if (NormalizeDuplicateWords(state) || legacyTaskCounts || settingsMigrated)
             {
                 foreach (StudyList list in state.lists.Where(x => x.status == "active"
                     && x.phase == "quiz")) RebuildPendingTasks(list);
@@ -636,6 +651,12 @@ namespace EnglishDictationTool
             settings.listQuestionOrder = NormalizeQuestionOrder(settings.listQuestionOrder);
             settings.problemQuestionOrder = NormalizeQuestionOrder(settings.problemQuestionOrder);
             settings.freeQuestionOrder = NormalizeQuestionOrder(settings.freeQuestionOrder);
+            settings.freeBook = settings.freeBook ?? string.Empty;
+            settings.freeUnits = (settings.freeUnits ?? new List<string>())
+                .Where(x => !string.IsNullOrWhiteSpace(x)).Distinct().ToList();
+            if (settings.freeContentMode != "words_only"
+                && settings.freeContentMode != "phrases_only")
+                settings.freeContentMode = "all";
             if (settings.timerPrecision != "millisecond") settings.timerPrecision = "minute";
         }
 
@@ -696,6 +717,8 @@ namespace EnglishDictationTool
         {
             foreach (StudyWord word in state.words.Where(x => string.Equals(x.book, oldName,
                 StringComparison.OrdinalIgnoreCase))) word.book = newName;
+            if (string.Equals(state.settings.freeBook, oldName, StringComparison.OrdinalIgnoreCase))
+                state.settings.freeBook = newName;
             if (state.settings.defaultBookCounts != null)
             {
                 KeyValuePair<string, int> prior = state.settings.defaultBookCounts.FirstOrDefault(x =>

@@ -197,6 +197,8 @@ namespace EnglishDictationTool
     internal sealed class PauseOverlay : UserControl
     {
         private Bitmap background;
+        private VideoBackground video;
+        private BackgroundAppearance videoStyle;
         private readonly Button resume;
         private readonly Label title;
         public event EventHandler ResumeRequested;
@@ -208,7 +210,7 @@ namespace EnglishDictationTool
             BackColor = Color.Black;
             title = new Label { Text = "已暂停", AutoSize = false, Width = 420, Height = 70,
                 TextAlign = ContentAlignment.MiddleCenter, ForeColor = Color.White,
-                BackColor = Color.Transparent, Font = new Font("Microsoft YaHei UI", 26, FontStyle.Bold) };
+                BackColor = Color.Transparent, Font = new Font("Segoe UI", 26, FontStyle.Bold) };
             title.Visible = false;
             resume = new ModernButton { Text = "继续学习", Width = 190, Height = 52, Primary = true };
             resume.Click += delegate { if (ResumeRequested != null) ResumeRequested(this, EventArgs.Empty); };
@@ -218,6 +220,7 @@ namespace EnglishDictationTool
 
         public void Prepare(Control target, AppearanceStore appearance, string moduleKey)
         {
+            if (video != null) { video.Dispose(); video = null; }
             if (background != null) { background.Dispose(); background = null; }
             BackgroundAppearance chosen = null;
             string overrideKey = "pause_" + moduleKey;
@@ -227,7 +230,12 @@ namespace EnglishDictationTool
             if (chosen == null && appearance != null && appearance.Settings.backgrounds.ContainsKey("pause"))
                 chosen = appearance.Settings.backgrounds["pause"];
             string imagePath = appearance == null || chosen == null ? null : appearance.ImagePath(chosen);
-            if (imagePath != null)
+            if (AppearanceStore.IsVideo(imagePath))
+            {
+                videoStyle = chosen;
+                video = new VideoBackground(this, imagePath, chosen, 100);
+            }
+            else if (imagePath != null)
             {
                 using (Image loaded = Image.FromFile(imagePath))
                     background = RenderImage(loaded, target.ClientSize, chosen.fit);
@@ -251,6 +259,14 @@ namespace EnglishDictationTool
 
         protected override void OnPaintBackground(PaintEventArgs e)
         {
+            if (video != null)
+            {
+                using (Brush fill = new SolidBrush(videoStyle == null
+                    ? Color.Black : Color.FromArgb(videoStyle.color)))
+                    e.Graphics.FillRectangle(fill, ClientRectangle);
+                video.Draw(e.Graphics, ClientRectangle);
+                return;
+            }
             if (background == null) { e.Graphics.Clear(Color.FromArgb(24, 28, 36)); return; }
             e.Graphics.DrawImage(background, ClientRectangle);
         }
@@ -318,6 +334,7 @@ namespace EnglishDictationTool
 
         protected override void Dispose(bool disposing)
         {
+            if (disposing && video != null) { video.Dispose(); video = null; }
             if (disposing && background != null) { background.Dispose(); background = null; }
             base.Dispose(disposing);
         }

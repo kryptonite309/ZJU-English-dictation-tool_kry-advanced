@@ -17,27 +17,29 @@ namespace EnglishDictationTool
 {
     internal static class Theme
     {
-        public static readonly Color Background = Color.FromArgb(12, 12, 12);
-        public static readonly Color Surface = Color.FromArgb(24, 24, 24);
-        public static readonly Color SurfaceRaised = Color.FromArgb(42, 42, 42);
-        public static readonly Color Border = Color.FromArgb(82, 82, 82);
-        public static readonly Color Text = Color.White;
-        public static readonly Color MutedText = Color.FromArgb(205, 205, 205);
+        public static readonly Color Background = Color.FromArgb(11, 13, 16);
+        public static readonly Color Surface = Color.FromArgb(21, 24, 29);
+        public static readonly Color SurfaceRaised = Color.FromArgb(29, 33, 40);
+        public static readonly Color Border = Color.FromArgb(42, 47, 54);
+        public static readonly Color Text = Color.FromArgb(244, 244, 245);
+        public static readonly Color MutedText = Color.FromArgb(161, 161, 170);
         public static readonly Color Error = Color.FromArgb(255, 82, 82);
         public static readonly Color Correct = Color.FromArgb(70, 210, 105);
-        public static readonly Font UiFont = new Font("Microsoft YaHei UI", 10.0f, FontStyle.Regular);
-        public static readonly Font LogFont = new Font("Microsoft YaHei UI", 12.0f, FontStyle.Regular);
+        public static readonly Font UiFont = new Font("Segoe UI", 10.0f, FontStyle.Regular);
+        public static readonly Font LogFont = new Font("Segoe UI", 12.0f, FontStyle.Regular);
 
         public static void Apply(Control root)
         {
             bool modern = root is ModernButton || root is ModernCard
                 || root is ModernHeader || root is ModernTabControl
-                || root is ModernGroupBox;
+                || root is ModernGroupBox || root is ModernMetric
+                || root is ModernListView || root is StudyModeWheel;
             if (!modern)
             {
                 bool inCard = false;
                 for (Control parent = root.Parent; parent != null; parent = parent.Parent)
-                    if (parent is ModernCard) { inCard = true; break; }
+                    if (parent is ModernCard || parent is ModernGroupBox)
+                    { inCard = true; break; }
                 root.BackColor = inCard ? ModernUI.Card : Background;
                 root.ForeColor = Text;
                 root.Font = UiFont;
@@ -54,12 +56,12 @@ namespace EnglishDictationTool
             Button button = root as Button;
             if (button != null)
             {
-                button.BackColor = SurfaceRaised;
+                button.BackColor = Surface;
                 button.ForeColor = Text;
                 button.FlatStyle = FlatStyle.Flat;
                 button.FlatAppearance.BorderColor = Border;
-                button.FlatAppearance.MouseOverBackColor = Color.FromArgb(58, 58, 58);
-                button.FlatAppearance.MouseDownBackColor = Color.FromArgb(70, 70, 70);
+                button.FlatAppearance.MouseOverBackColor = Color.FromArgb(37, 42, 50);
+                button.FlatAppearance.MouseDownBackColor = SurfaceRaised;
             }
 
             TextBox textBox = root as TextBox;
@@ -365,6 +367,25 @@ namespace EnglishDictationTool
             return Marker.Replace(sentence ?? string.Empty, "$1");
         }
 
+        public static string HighlightedExamples(WordEntry word)
+        {
+            if (word == null || string.IsNullOrWhiteSpace(word.examples)) return "该单词暂时没有例句";
+            return string.Join("\n", word.examples.Split(new[] { '；' }, StringSplitOptions.RemoveEmptyEntries)
+                .Select(raw => {
+                    MatchCollection marks = Marker.Matches(raw);
+                    if (marks.Count > 0)
+                    {
+                        List<string> tokens = Tokens(GameEngine.CleanEnglish(word));
+                        return Marker.Replace(raw.Trim(), match => marks.Count == 1 || IsRelated(match.Groups[1].Value, tokens)
+                            ? "[[" + match.Groups[1].Value + "]]" : match.Groups[1].Value);
+                    }
+                    string plain = PlainText(raw.Trim());
+                    string head = GameEngine.CleanEnglish(word);
+                    return string.IsNullOrWhiteSpace(head) ? plain : Regex.Replace(plain,
+                        @"(?<![A-Za-z])" + Regex.Escape(head) + @"(?![A-Za-z])", "[[$0]]", RegexOptions.IgnoreCase);
+                }));
+        }
+
         private static ExampleQuestion Create(WordEntry word, string sentence)
         {
             MatchCollection all = Marker.Matches(sentence ?? string.Empty);
@@ -471,6 +492,8 @@ namespace EnglishDictationTool
     {
         public static string FindProjectRoot()
         {
+            string isolated = AppDomain.CurrentDomain.BaseDirectory;
+            if (File.Exists(Path.Combine(isolated, "isolated-build.txt"))) return isolated;
             string configured = Environment.GetEnvironmentVariable("ENGLISH_DICTATION_PROJECT_ROOT");
             if (!string.IsNullOrWhiteSpace(configured)
                 && Directory.Exists(Path.Combine(configured, "data")))
@@ -1247,6 +1270,78 @@ namespace EnglishDictationTool
         }
     }
 
+    internal sealed class FreePracticeForm : Form
+    {
+        public readonly Panel ToolbarHost;
+        public readonly Panel ContentHost;
+        public Func<Keys, bool> ShortcutHandler;
+        public Action HiddenRequested;
+        public bool AllowClose;
+
+        public FreePracticeForm()
+        {
+            ModernUI.ApplyAppIcon(this);
+            Text = "自由练习  KRY 增强版 v1.3.5";
+            StartPosition = FormStartPosition.CenterScreen;
+            ClientSize = ModernUI.FitWindow(1320, 820);
+            MinimumSize = new Size(920, 620);
+            BackColor = Theme.Background;
+            ForeColor = Theme.Text;
+            Font = Theme.UiFont;
+            AutoScaleMode = AutoScaleMode.Dpi;
+            KeyPreview = true;
+
+            TableLayoutPanel shell = new TableLayoutPanel { Dock = DockStyle.Fill,
+                ColumnCount = 1, RowCount = 3, BackColor = Theme.Background,
+                Padding = new Padding(24, 18, 24, 22) };
+            shell.RowStyles.Add(new RowStyle(SizeType.Absolute, 72));
+            shell.RowStyles.Add(new RowStyle(SizeType.Absolute, 124));
+            shell.RowStyles.Add(new RowStyle(SizeType.Percent, 100f));
+            Controls.Add(shell);
+
+            TableLayoutPanel heading = new TableLayoutPanel { Dock = DockStyle.Fill,
+                ColumnCount = 2, RowCount = 1, BackColor = Theme.Background };
+            heading.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100f));
+            heading.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 300));
+            Label title = new Label { Dock = DockStyle.Fill, Text = "自由练习",
+                ForeColor = Theme.Text, BackColor = Theme.Background,
+                Font = new Font("Segoe UI", 24f, FontStyle.Bold),
+                TextAlign = ContentAlignment.MiddleLeft };
+            Label note = new Label { Dock = DockStyle.Fill,
+                Text = "独立窗口  切换或失去焦点时自动停止计时",
+                ForeColor = Theme.MutedText, BackColor = Theme.Background,
+                Font = new Font("Segoe UI", 9f), TextAlign = ContentAlignment.MiddleRight };
+            heading.Controls.Add(title, 0, 0);
+            heading.Controls.Add(note, 1, 0);
+            shell.Controls.Add(heading, 0, 0);
+
+            ToolbarHost = new Panel { Dock = DockStyle.Fill, BackColor = Theme.Background,
+                Padding = new Padding(0, 5, 0, 7) };
+            shell.Controls.Add(ToolbarHost, 0, 1);
+
+            ModernCard card = new ModernCard { Dock = DockStyle.Fill, Margin = Padding.Empty,
+                Padding = new Padding(18) };
+            ContentHost = new Panel { Dock = DockStyle.Fill, BackColor = ModernUI.Card };
+            card.Controls.Add(ContentHost);
+            shell.Controls.Add(card, 0, 2);
+            FormClosing += OnPracticeClosing;
+        }
+
+        protected override bool ProcessCmdKey(ref Message msg, Keys keyData)
+        {
+            if (ShortcutHandler != null && ShortcutHandler(keyData)) return true;
+            return base.ProcessCmdKey(ref msg, keyData);
+        }
+
+        private void OnPracticeClosing(object sender, FormClosingEventArgs e)
+        {
+            if (AllowClose) return;
+            e.Cancel = true;
+            Hide();
+            if (HiddenRequested != null) HiddenRequested();
+        }
+    }
+
     internal sealed class MainForm : Form
     {
         private const int DwmUseImmersiveDarkMode = 20;
@@ -1272,8 +1367,20 @@ namespace EnglishDictationTool
         private int exampleRevealStage;
 
         private Panel settingsPanel;
-        private FlowLayoutPanel quickActions;
+        private AppearanceBackgroundPanel mainBackground;
+        private HomeDashboardHost homeDashboard;
+        private TableLayoutPanel homeShell;
+        private ModernHeader homeHeader;
         private TableLayoutPanel mainCenter;
+        private StudyModeWheel studyModeWheel;
+        private FreePracticeForm freePracticeWindow;
+        private Button freeModeButton;
+        private int homeLayoutClass = -1;
+        private Panel modeActionHost;
+        private Label modeEyebrow;
+        private Label modeTitle;
+        private Label modeDescription;
+        private Label modeStatus;
         private StyledCanvas logArea;
         private TextBox inputLine;
         private DarkComboBox bookCombo;
@@ -1296,7 +1403,10 @@ namespace EnglishDictationTool
         private Button dailyNewEndButton;
         private Button dailyListEndButton;
         private Button dailyProblemEndButton;
-        private Label dailyProgress;
+        private ModernMetric dailyNewMetric;
+        private ModernMetric dailyListMetric;
+        private ModernMetric dailyProblemMetric;
+        private ModernMetric dailyListsMetric;
         private CheckBox reviewFirstLetter;
         private NumericUpDown reviewCorrectTarget;
         private TextBox shortcutCapture;
@@ -1314,6 +1424,11 @@ namespace EnglishDictationTool
         private WordPronouncer freePronouncer;
         private PronunciationSettings freePronunciationSettings;
         private ModernProgressBar freeProgress;
+        private AnswerFeedback freeFeedback;
+        private SessionSummaryView freeSummary;
+        private Button freeReplayButton, freeNextButton, freeEndButton;
+        private LinkLabel githubLink, emailLink;
+        private OnboardingController onboarding;
 
         public MainForm()
         {
@@ -1332,16 +1447,28 @@ namespace EnglishDictationTool
             freePronouncer = new WordPronouncer(freePronunciationSettings);
             keybindings = LoadKeybindings();
 
-            Text = "大英默写器 · KRY 增强版 v1.2.0";
+            Text = "大英默写器  KRY 增强版 v1.3.5";
             StartPosition = FormStartPosition.CenterScreen;
-            ClientSize = ModernUI.FitWindow(1500, 900);
-            MinimumSize = new Size(960, 650);
+            ClientSize = ModernUI.FitWindow(1540, 920);
+            MinimumSize = new Size(1100, 720);
             BackColor = Theme.Background;
             ForeColor = Theme.Text;
             Font = Theme.UiFont;
             AutoScaleMode = AutoScaleMode.Dpi;
 
             BuildInterface();
+            onboarding = new OnboardingController(this, homeDashboard, projectRoot,
+                delegate { return notebooks.MasteryShortcut; },
+                delegate
+                {
+                    return new StudySettingsForm(study, notebooks, loader,
+                        backups, appearance, settingsPanel, CollectFreeSettingsControls);
+                },
+                delegate { return new AppearanceSettingsForm(appearance); },
+                delegate { return new AcceptedAnswersForm(study, loader); },
+                delegate { return new NotebookManagerForm(loader, notebooks); },
+                delegate { return new StatisticsForm(study, practice, appearance); },
+                RefreshAfterSettings);
             notebooks.Changed += delegate
             {
                 UpdateReviewButtonCount();
@@ -1378,7 +1505,10 @@ namespace EnglishDictationTool
             Shown += delegate
             {
                 UpdateService.ShowPriorResult(this, projectRoot);
-                if (study.Settings.checkUpdatesOnStartup
+                bool guideStarted = Environment.GetCommandLineArgs().Length == 1
+                    && onboarding != null && onboarding.ShouldStart();
+                if (guideStarted) onboarding.Begin(false);
+                if (!guideStarted && study.Settings.checkUpdatesOnStartup
                     && Environment.GetCommandLineArgs().Length == 1)
                     updater.CheckAsync(this, true);
             };
@@ -1399,6 +1529,7 @@ namespace EnglishDictationTool
         protected override void OnDeactivate(EventArgs e)
         {
             if (freeLearningTimer != null) freeLearningTimer.Refresh();
+            if (homeDashboard != null) homeDashboard.SetPlaybackActive(false);
             base.OnDeactivate(e);
         }
 
@@ -1406,6 +1537,16 @@ namespace EnglishDictationTool
         {
             base.OnActivated(e);
             if (freeLearningTimer != null) freeLearningTimer.Refresh();
+            if (homeDashboard != null) homeDashboard.SetPlaybackActive(true);
+        }
+
+        protected override void OnFormClosing(FormClosingEventArgs e)
+        {
+            if (onboarding != null && onboarding.Active)
+                onboarding.NotifyApplicationClosing();
+            if (freePracticeWindow != null && !freePracticeWindow.IsDisposed)
+                freePracticeWindow.AllowClose = true;
+            base.OnFormClosing(e);
         }
 
         protected override void OnFormClosed(FormClosedEventArgs e)
@@ -1415,6 +1556,16 @@ namespace EnglishDictationTool
                     exampleRevealStage, freeDictationMeaningShown, true);
             if (freeLearningTimer != null) freeLearningTimer.Dispose();
             if (freePronouncer != null) freePronouncer.Dispose();
+            if (freePracticeWindow != null && !freePracticeWindow.IsDisposed)
+            {
+                freePracticeWindow.AllowClose = true;
+                freePracticeWindow.Close();
+            }
+            if (onboarding != null)
+            {
+                onboarding.Dispose();
+                onboarding = null;
+            }
             backupTimer.Stop(); backupTimer.Dispose();
             base.OnFormClosed(e);
         }
@@ -1461,10 +1612,22 @@ namespace EnglishDictationTool
 
         internal Control PausePreviewControl { get { return freePauseOverlay; } }
 
+        internal string HomeLayoutReport()
+        {
+            string child = homeDashboard == null || homeDashboard.Child == null ? "null"
+                : homeDashboard.Child.RenderSize.Width + "x"
+                    + homeDashboard.Child.RenderSize.Height;
+            return "form=" + ClientSize + "; background="
+                + (mainBackground == null ? "null" : mainBackground.Bounds.ToString())
+                + "; host=" + (homeDashboard == null ? "null" : homeDashboard.Bounds.ToString())
+                + "; child=" + child + "; media="
+                + (homeDashboard == null ? "null" : homeDashboard.DebugState);
+        }
+
         internal void SaveSettingsPreview(string outputFile)
         {
             using (StudySettingsForm form = new StudySettingsForm(study, notebooks, loader,
-                backups, appearance, settingsPanel))
+                backups, appearance, settingsPanel, CollectFreeSettingsControls))
             {
                 try
                 {
@@ -1489,51 +1652,144 @@ namespace EnglishDictationTool
             settingsPanel.AutoScrollPosition = new Point(0, settingsPanel.DisplayRectangle.Height);
         }
 
+        internal void SaveFreePracticePreview(string outputFile)
+        {
+            freePracticeWindow.StartPosition = FormStartPosition.Manual;
+            freePracticeWindow.Location = new Point(-20000, -20000);
+            freePracticeWindow.Show();
+            Application.DoEvents();
+            using (Bitmap image = new Bitmap(freePracticeWindow.Width, freePracticeWindow.Height))
+            {
+                freePracticeWindow.DrawToBitmap(image,
+                    new Rectangle(Point.Empty, freePracticeWindow.Size));
+                image.Save(outputFile, ImageFormat.Png);
+            }
+            freePracticeWindow.Hide();
+        }
+
         private void BuildInterface()
         {
+            mainBackground = new AppearanceBackgroundPanel { Dock = DockStyle.Fill };
             TableLayoutPanel shell = new TableLayoutPanel { Dock = DockStyle.Fill,
-                ColumnCount = 1, RowCount = 4, BackColor = Theme.Background,
-                Padding = new Padding(18, 8, 18, 18) };
-            shell.RowStyles.Add(new RowStyle(SizeType.Absolute, 126));
-            shell.RowStyles.Add(new RowStyle(SizeType.Absolute, 260));
-            shell.RowStyles.Add(new RowStyle(SizeType.Absolute, 74));
-            shell.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
-            Controls.Add(shell);
+                ColumnCount = 1, RowCount = 3, BackColor = Color.Transparent,
+                Padding = new Padding(28, 14, 28, 26) };
+            homeShell = shell;
+            shell.RowStyles.Add(new RowStyle(SizeType.Absolute, 165));
+            shell.RowStyles.Add(new RowStyle(SizeType.Absolute, 148));
+            shell.RowStyles.Add(new RowStyle(SizeType.Percent, 100f));
+            mainBackground.Controls.Add(shell);
+            Controls.Add(mainBackground);
             ModernHeader header = new ModernHeader { Dock = DockStyle.Fill,
-                Title = "大英默写器", Subtitle = "每日计划与自由练习，都从这里开始" };
-            ModernButton settingsEntry = new ModernButton { Text = "设置", Width = 104, Height = 44,
+                Eyebrow = "KRY ADVANCED   FOCUS ON YOUR WORDS",
+                Title = "今天，从一个单词开始。", Subtitle = string.Empty };
+            homeHeader = header;
+            header.BackColor = Color.Transparent;
+            ModernButton settingsEntry = new ModernButton { Text = "设置", Width = 108, Height = 46,
                 Subtle = true, Anchor = AnchorStyles.Top | AnchorStyles.Right };
             settingsEntry.Click += delegate { OpenStudySettings(); };
-            ModernButton help = new ModernButton { Text = "帮助", Width = 104, Height = 44,
+            ModernButton help = new ModernButton { Text = "帮助", Width = 108, Height = 46,
                 Subtle = true, Anchor = AnchorStyles.Top | AnchorStyles.Right };
             help.Click += delegate { ShowHelp(); };
             header.Controls.Add(settingsEntry);
             header.Controls.Add(help);
+            githubLink = new LinkLabel { Text = "GitHub 项目仓库", AutoSize = false,
+                Size = new Size(300, 24), BackColor = Theme.SurfaceRaised,
+                ForeColor = Theme.Text, LinkColor = Theme.Text, ActiveLinkColor = Color.White,
+                TextAlign = ContentAlignment.MiddleCenter,
+                Font = new Font("Segoe UI", 9.5f, FontStyle.Bold),
+                LinkBehavior = LinkBehavior.HoverUnderline };
+            emailLink = new LinkLabel { Text = "QQ 邮箱 1242532684@qq.com", AutoSize = false,
+                Size = new Size(300, 24), BackColor = Theme.SurfaceRaised,
+                ForeColor = Theme.Text, LinkColor = Theme.Text, ActiveLinkColor = Color.White,
+                TextAlign = ContentAlignment.MiddleCenter,
+                Font = new Font("Segoe UI", 9.5f, FontStyle.Bold),
+                LinkBehavior = LinkBehavior.HoverUnderline };
+            githubLink.LinkClicked += delegate { OpenContact("https://github.com/kryptonite309/ZJU-English-dictation-tool_kry-advanced"); };
+            emailLink.LinkClicked += delegate { OpenContact("mailto:1242532684@qq.com"); };
+            header.Controls.Add(githubLink); header.Controls.Add(emailLink);
             header.Resize += delegate
             {
-                settingsEntry.Location = new Point(header.Width - 118, 37);
-                help.Location = new Point(header.Width - 234, 37);
+                int y = Math.Max(18, (header.Height - settingsEntry.Height) / 2);
+                settingsEntry.Location = new Point(header.Width - settingsEntry.Width - 10, y);
+                help.Location = new Point(settingsEntry.Left - help.Width - 14, y);
+                LayoutContactLinks(settingsEntry);
             };
             shell.Controls.Add(header, 0, 0);
 
-            TableLayoutPanel cardRow = new TableLayoutPanel { Dock = DockStyle.Fill,
-                ColumnCount = 3, RowCount = 1, BackColor = Theme.Background };
-            for (int column = 0; column < 3; column++)
-                cardRow.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 33.333f));
-            ModernCard newCard = new ModernCard { Dock = DockStyle.Fill, Margin = new Padding(5),
-                Eyebrow = "01 / DAILY", Title = "学习新词", Detail = "按词书抽取，先看后练" };
-            ModernCard listCard = new ModernCard { Dock = DockStyle.Fill, Margin = new Padding(5),
-                Eyebrow = "02 / REVIEW", Title = "回顾列表", Detail = "回看最近学过的单词" };
-            ModernCard problemCard = new ModernCard { Dock = DockStyle.Fill, Margin = new Padding(5),
-                Eyebrow = "03 / FOCUS", Title = "攻克错词", Detail = "错题与易错词集中练习" };
-            cardRow.Controls.Add(newCard, 0, 0);
-            cardRow.Controls.Add(listCard, 1, 0);
-            cardRow.Controls.Add(problemCard, 2, 0);
-            shell.Controls.Add(cardRow, 0, 1);
-            quickActions = new FlowLayoutPanel { Dock = DockStyle.Fill, AutoScroll = true,
-                WrapContents = false, FlowDirection = FlowDirection.LeftToRight,
-                Padding = new Padding(6, 5, 0, 0), BackColor = Theme.Background };
-            shell.Controls.Add(quickActions, 0, 2);
+            ModernCard metricsCard = new ModernCard { Dock = DockStyle.Fill,
+                Margin = new Padding(5, 0, 5, 10), Padding = new Padding(12, 8, 12, 8) };
+            TableLayoutPanel metrics = new TableLayoutPanel { Dock = DockStyle.Fill,
+                ColumnCount = 4, RowCount = 1, BackColor = ModernUI.Card,
+                Padding = Padding.Empty };
+            for (int column = 0; column < 4; column++)
+                metrics.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 25f));
+            dailyNewMetric = new ModernMetric { Dock = DockStyle.Fill, Margin = Padding.Empty,
+                Caption = "今日新学", Detail = string.Empty, ShowDivider = true };
+            dailyListMetric = new ModernMetric { Dock = DockStyle.Fill, Margin = Padding.Empty,
+                Caption = "列表复习", Detail = string.Empty, ShowDivider = true };
+            dailyProblemMetric = new ModernMetric { Dock = DockStyle.Fill, Margin = Padding.Empty,
+                Caption = "错题复习", Detail = string.Empty, ShowDivider = true };
+            dailyListsMetric = new ModernMetric { Dock = DockStyle.Fill, Margin = Padding.Empty,
+                Caption = "今日新学列表", Detail = string.Empty };
+            metrics.Controls.Add(dailyNewMetric, 0, 0);
+            metrics.Controls.Add(dailyListMetric, 1, 0);
+            metrics.Controls.Add(dailyProblemMetric, 2, 0);
+            metrics.Controls.Add(dailyListsMetric, 3, 0);
+            metricsCard.Controls.Add(metrics);
+            shell.Controls.Add(metricsCard, 0, 1);
+
+            ModernCard modeCard = new ModernCard { Dock = DockStyle.Fill,
+                Margin = new Padding(5, 6, 5, 0), Padding = new Padding(28) };
+            TableLayoutPanel modeLayout = new TableLayoutPanel { Dock = DockStyle.Fill,
+                ColumnCount = 2, RowCount = 1, BackColor = ModernUI.Card };
+            modeLayout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 40f));
+            modeLayout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 60f));
+            studyModeWheel = new StudyModeWheel(
+                new[] { "new", "list_review", "problem_review", "free" },
+                new[] { "新学", "历史列表复习", "错题与易错词复习", "自由练习" })
+                { Dock = DockStyle.Fill, Margin = new Padding(0, 0, 34, 0) };
+            modeLayout.Controls.Add(studyModeWheel, 0, 0);
+
+            TableLayoutPanel detailFrame = new TableLayoutPanel { Dock = DockStyle.Fill,
+                ColumnCount = 2, RowCount = 1, BackColor = ModernUI.Card };
+            detailFrame.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 1));
+            detailFrame.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100f));
+            Panel divider = new Panel { Dock = DockStyle.Fill, BackColor = Theme.Border,
+                Margin = Padding.Empty };
+            detailFrame.Controls.Add(divider, 0, 0);
+            TableLayoutPanel modeDetail = new TableLayoutPanel { Dock = DockStyle.Fill,
+                ColumnCount = 1, RowCount = 7, BackColor = ModernUI.Card,
+                Padding = new Padding(42, 14, 18, 14) };
+            modeDetail.RowStyles.Add(new RowStyle(SizeType.Percent, 50f));
+            modeDetail.RowStyles.Add(new RowStyle(SizeType.Absolute, 30));
+            modeDetail.RowStyles.Add(new RowStyle(SizeType.Absolute, 64));
+            modeDetail.RowStyles.Add(new RowStyle(SizeType.Absolute, 52));
+            modeDetail.RowStyles.Add(new RowStyle(SizeType.Absolute, 48));
+            modeDetail.RowStyles.Add(new RowStyle(SizeType.Absolute, 58));
+            modeDetail.RowStyles.Add(new RowStyle(SizeType.Percent, 50f));
+            modeEyebrow = new Label { Dock = DockStyle.Fill, BackColor = ModernUI.Card,
+                ForeColor = ModernUI.Muted, Font = new Font("Segoe UI", 8.5f, FontStyle.Bold),
+                TextAlign = ContentAlignment.MiddleCenter };
+            modeTitle = new Label { Dock = DockStyle.Fill, BackColor = ModernUI.Card,
+                ForeColor = Theme.Text, Font = new Font("Segoe UI", 27f, FontStyle.Bold),
+                TextAlign = ContentAlignment.MiddleCenter };
+            modeDescription = new Label { Dock = DockStyle.Fill, BackColor = ModernUI.Card,
+                ForeColor = Theme.MutedText, Font = new Font("Segoe UI", 11f),
+                TextAlign = ContentAlignment.MiddleCenter };
+            modeStatus = new Label { Dock = DockStyle.Fill, BackColor = ModernUI.Card,
+                ForeColor = ModernUI.MutedSoft, Font = new Font("Segoe UI", 8.5f),
+                TextAlign = ContentAlignment.MiddleCenter };
+            modeActionHost = new Panel { Dock = DockStyle.Fill, BackColor = ModernUI.Card,
+                Margin = Padding.Empty };
+            modeDetail.Controls.Add(modeEyebrow, 0, 1);
+            modeDetail.Controls.Add(modeTitle, 0, 2);
+            modeDetail.Controls.Add(modeDescription, 0, 3);
+            modeDetail.Controls.Add(modeStatus, 0, 4);
+            modeDetail.Controls.Add(modeActionHost, 0, 5);
+            detailFrame.Controls.Add(modeDetail, 1, 0);
+            modeLayout.Controls.Add(detailFrame, 1, 0);
+            modeCard.Controls.Add(modeLayout);
+            shell.Controls.Add(modeCard, 0, 2);
             settingsPanel = new Panel();
             settingsPanel.Dock = DockStyle.Fill;
             settingsPanel.Padding = new Padding(12);
@@ -1558,26 +1814,19 @@ namespace EnglishDictationTool
             dailyNewEndButton = MakeButton("结束列表");
             ((ModernButton)dailyNewEndButton).Subtle = true;
             dailyNewEndButton.Click += delegate { EndDaily("new"); };
-            PlaceCardButtons(newCard, dailyNewButton, dailyNewEndButton);
             dailyListButton = MakeButton("历史列表复习");
             dailyListButton.Click += delegate { StartDailyList(); };
+            ((ModernButton)dailyListButton).Primary = true;
             dailyListEndButton = MakeButton("结束列表");
             ((ModernButton)dailyListEndButton).Subtle = true;
             dailyListEndButton.Click += delegate { EndDaily("list_review"); };
-            PlaceCardButtons(listCard, dailyListButton, dailyListEndButton);
             dailyProblemButton = MakeButton("错题与易错词复习");
             dailyProblemButton.Click += delegate { StartDailyProblems(); };
+            ((ModernButton)dailyProblemButton).Primary = true;
             dailyProblemEndButton = MakeButton("结束列表");
             ((ModernButton)dailyProblemEndButton).Subtle = true;
             dailyProblemEndButton.Click += delegate { EndDaily("problem_review"); };
-            PlaceCardButtons(problemCard, dailyProblemButton, dailyProblemEndButton);
-            dailyProgress = MakeLabel("");
-            dailyProgress.Width = 365;
-            dailyProgress.Height = 60;
-            dailyProgress.TextAlign = ContentAlignment.MiddleLeft;
-            dailyProgress.BackColor = Theme.Background;
-            quickActions.Controls.Add(dailyProgress);
-            selectionColumn.Controls.Add(MakeLabel("自由练习 · 词书与范围"));
+            selectionColumn.Controls.Add(MakeLabel("自由练习  词书与范围"));
             answerColumn.Controls.Add(MakeLabel("题型与作答"));
             notebookColumn.Controls.Add(MakeLabel("词本与快捷键"));
 
@@ -1595,9 +1844,12 @@ namespace EnglishDictationTool
             unitList.IntegralHeight = false;
             selectionColumn.Controls.Add(unitList);
 
-            contentAll = MakeRadio("全部（单词 + 短语）", true);
-            contentWords = MakeRadio("仅单词", false);
-            contentPhrases = MakeRadio("仅短语", false);
+            contentAll = MakeRadio("全部（单词 + 短语）",
+                study.Settings.freeContentMode == "all");
+            contentWords = MakeRadio("仅单词",
+                study.Settings.freeContentMode == "words_only");
+            contentPhrases = MakeRadio("仅短语",
+                study.Settings.freeContentMode == "phrases_only");
             selectionColumn.Controls.Add(MakeRadioGroup("选择内容", contentAll, contentWords, contentPhrases));
 
             orderSequential = MakeRadio("顺序", study.Settings.freeQuestionOrder == "sequential");
@@ -1612,37 +1864,86 @@ namespace EnglishDictationTool
             answerColumn.Controls.Add(MakeCheckGroup("选择题型（可多选；先后顺序在设置中调整）",
                 questionExample, questionDictation, questionWord));
 
-            showFirstLetter = MakeCheckBox("普通拼写直接显示首字母", false);
-            retryOnWrong = MakeCheckBox("答错后重试当前词", true);
+            showFirstLetter = MakeCheckBox("普通拼写直接显示首字母",
+                study.Settings.freeShowFirstLetter);
+            retryOnWrong = MakeCheckBox("答错后重试当前词",
+                study.Settings.freeRetryOnWrong);
             answerColumn.Controls.Add(MakeGroup("普通拼写提示", showFirstLetter));
             answerColumn.Controls.Add(MakeGroup("答题选项", retryOnWrong));
 
-            freeStartButton = MakeButton("自由练习");
-            freeStartButton.Width = 170;
+            freeModeButton = MakeButton("打开自由练习窗口");
+            ((ModernButton)freeModeButton).Primary = true;
+            freeModeButton.Click += delegate { OpenFreePracticeWindow(); };
+            freeStartButton = MakeButton("开始自由练习");
+            ((ModernButton)freeStartButton).Primary = true;
             freeStartButton.Click += delegate { StartGame(); };
-            quickActions.Controls.Add(freeStartButton);
             freePauseButton = MakeButton("暂停自由练习");
-            freePauseButton.Width = 170;
+            ((ModernButton)freePauseButton).Subtle = true;
             freePauseButton.Visible = false;
             freePauseButton.Click += delegate { ToggleFreePause(); };
-            quickActions.Controls.Add(freePauseButton);
+            foreach (Button action in new[] { dailyNewButton, dailyNewEndButton,
+                dailyListButton, dailyListEndButton, dailyProblemButton,
+                dailyProblemEndButton, freeModeButton })
+            {
+                action.Margin = Padding.Empty;
+                action.Height = 46;
+                modeActionHost.Controls.Add(action);
+            }
+            homeDashboard = new HomeDashboardHost { Dock = DockStyle.Fill };
+            homeDashboard.ModeRequested += delegate(string key)
+            {
+                studyModeWheel.SelectMode(key);
+            };
+            homeDashboard.PrimaryRequested += delegate
+            {
+                ExecuteHomeAction(false);
+            };
+            homeDashboard.SecondaryRequested += delegate
+            {
+                ExecuteHomeAction(true);
+            };
+            homeDashboard.SettingsRequested += delegate
+            {
+                if (onboarding != null && onboarding.HandleHomeSettingsRequested()) return;
+                OpenStudySettings();
+            };
+            homeDashboard.HelpPageRequested += delegate { ShowHelp(); };
+            homeDashboard.GithubRequested += delegate
+            {
+                OpenContact("https://github.com/kryptonite309/ZJU-English-dictation-tool_kry-advanced");
+            };
+            homeDashboard.EmailRequested += delegate
+            {
+                OpenContact("mailto:1242532684@qq.com");
+            };
+            mainBackground.Controls.Add(homeDashboard);
+            homeDashboard.BringToFront();
+            modeActionHost.Resize += delegate { LayoutModeActions(); };
+            studyModeWheel.SelectionChanged += delegate { RefreshModeSelection(); };
+            shell.Resize += delegate
+            {
+                ApplyResponsiveHomeLayout(shell, header, metricsCard, modeCard,
+                    modeDetail, help, settingsEntry);
+            };
+            ApplyResponsiveHomeLayout(shell, header, metricsCard, modeCard,
+                modeDetail, help, settingsEntry);
+            RefreshModeSelection();
             freeTimerLabel = MakeLabel(string.Empty);
-            freeTimerLabel.Width = 220; freeTimerLabel.Height = 50;
+            freeTimerLabel.Width = 260; freeTimerLabel.Height = 58;
             freeTimerLabel.TextAlign = ContentAlignment.MiddleCenter;
-            quickActions.Controls.Add(freeTimerLabel);
+            freeTimerLabel.Font = new Font("Segoe UI", 12f, FontStyle.Bold);
+            freeTimerLabel.ForeColor = Theme.Text;
             Button statisticsButton = MakeButton("学习统计");
-            statisticsButton.Width = 150;
             statisticsButton.Click += delegate
             {
                 using (StatisticsForm form = new StatisticsForm(study, practice, appearance))
                     form.ShowDialog(this);
             };
-            quickActions.Controls.Add(statisticsButton);
+            notebookColumn.Controls.Add(statisticsButton);
 
             reviewButton = MakeButton("复习错题 (0)");
-            reviewButton.Width = 170;
             reviewButton.Click += delegate { StartReview(); };
-            quickActions.Controls.Add(reviewButton);
+            answerColumn.Controls.Add(reviewButton);
 
             Button clearWrongButton = MakeButton("清空错题本");
             clearWrongButton.Click += delegate { ClearWrongWords(); };
@@ -1700,14 +2001,13 @@ namespace EnglishDictationTool
             masterButton.Text = "斩当前词";
             masterButton.Width = 170;
             masterButton.Click += delegate { MasterCurrentWord(); };
-            quickActions.Controls.Add(masterButton);
 
             Button manageButton = MakeButton("管理全部单词本");
             manageButton.Click += delegate { OpenNotebookManager(); };
             notebookColumn.Controls.Add(manageButton);
 
             GroupBox recentGroup = new ModernGroupBox();
-            recentGroup.Text = "最近 5 次操作 · 待定队列";
+            recentGroup.Text = "最近 5 次操作  待定队列";
             recentGroup.Width = 340;
             recentGroup.Height = 280;
             recentGroup.BackColor = Theme.Background;
@@ -1723,9 +2023,6 @@ namespace EnglishDictationTool
             recentGroup.Controls.Add(recentQueue);
             notebookColumn.Controls.Add(recentGroup);
 
-            ModernCard contentCard = new ModernCard { Dock = DockStyle.Fill,
-                Margin = new Padding(5), Padding = new Padding(14) };
-            shell.Controls.Add(contentCard, 0, 3);
             TableLayoutPanel center = new TableLayoutPanel();
             center.Dock = DockStyle.Fill;
             center.ColumnCount = 1;
@@ -1735,7 +2032,6 @@ namespace EnglishDictationTool
             center.RowStyles.Add(new RowStyle(SizeType.Percent, 100f));
             center.RowStyles.Add(new RowStyle(SizeType.Absolute, 57f));
             center.RowStyles.Add(new RowStyle(SizeType.Absolute, 42f));
-            contentCard.Controls.Add(center);
             mainCenter = center;
 
             logArea = new StyledCanvas();
@@ -1757,22 +2053,72 @@ namespace EnglishDictationTool
                 Margin = new Padding(0, 6, 0, 0), Visible = false };
             center.Controls.Add(freeProgress, 0, 2);
 
+            freePracticeWindow = new FreePracticeForm();
+            freePracticeWindow.ShortcutHandler = HandleFreePracticeShortcut;
+            freePracticeWindow.HiddenRequested = SaveFreePracticeWindowState;
+            freePracticeWindow.ContentHost.Controls.Add(center);
+
+            FlowLayoutPanel freeToolbar = new FlowLayoutPanel { Dock = DockStyle.Fill,
+                FlowDirection = FlowDirection.LeftToRight, WrapContents = true,
+                AutoScroll = true, BackColor = Theme.Background, Padding = Padding.Empty };
+            freeStartButton.Width = 190;
+            freePauseButton.Width = 190;
+            masterButton.Width = 150;
+            ModernButton freeSettings = new ModernButton { Text = "练习设置", Width = 150,
+                Height = 46, Subtle = true, Margin = new Padding(8, 0, 0, 0) };
+            freeSettings.Click += delegate { OpenStudySettings(); };
+            foreach (Control action in new Control[] { freeStartButton, freePauseButton,
+                masterButton, freeSettings, freeTimerLabel })
+            {
+                action.Height = action == freeTimerLabel ? Math.Max(58,
+                    TextRenderer.MeasureText("本模块用时\r\n00:00:00.000", freeTimerLabel.Font).Height + 8) : 46;
+                action.Margin = new Padding(action == freeStartButton || action == freePauseButton ? 0 : 8, 0, 0, 0);
+                freeToolbar.Controls.Add(action);
+            }
+            freePracticeWindow.ToolbarHost.Controls.Add(freeToolbar);
+            freeReplayButton = MakeButton("重听单词"); freeReplayButton.Width = 112;
+            freeReplayButton.Click += delegate { ReplayFreeWord(); };
+            freeNextButton = MakeButton("下一题"); freeNextButton.Width = 112;
+            freeNextButton.Click += delegate { ContinueFreeFeedback(); };
+            freeEndButton = MakeButton("结束列表"); freeEndButton.Width = 112;
+            freeEndButton.Click += delegate { EndFreeList(); };
+            foreach (Button extra in new[] { freeReplayButton, freeNextButton, freeEndButton })
+            { extra.Enabled = false; freeToolbar.Controls.Add(extra); }
             freePauseOverlay = new PauseOverlay { Visible = false };
             freePauseOverlay.ResumeRequested += delegate { ResumeFreePractice(); };
-            Controls.Add(freePauseOverlay);
+            freePracticeWindow.Controls.Add(freePauseOverlay);
         }
 
         protected override bool ProcessCmdKey(ref Message msg, Keys keyData)
         {
-            if (shortcutCapture != null && shortcutCapture.Focused)
-                return base.ProcessCmdKey(ref msg, keyData);
-            if (practice.Current != null && practice.Current.active
+            if (HandleFreePracticeShortcut(keyData)) return true;
+            return base.ProcessCmdKey(ref msg, keyData);
+        }
+
+        private bool HandleFreePracticeShortcut(Keys keyData)
+        {
+            if (freePracticeWindow == null || !freePracticeWindow.ContainsFocus) return false;
+            if (freeSummary != null)
+            {
+                if (keyData == Keys.Escape) { freePracticeWindow.Hide(); ClearFreeSummary(); }
+                return true;
+            }
+            if (shortcutCapture != null && shortcutCapture.Focused) return false;
+            if (practice.Current != null
                 && keyData == (Keys)study.Settings.pauseKey)
             {
                 ToggleFreePause();
                 return true;
             }
             if (freePaused) return true;
+            if (freeFeedback != null)
+            {
+                if (keyData == Keys.Enter) { ContinueFreeFeedback(); return true; }
+                if (keyData == (Keys)freePronunciationSettings.replayKey) { ReplayFreeWord(); return true; }
+                return true;
+            }
+            if (currentWord == null && practice.Current != null && !practice.Current.active && keyData == Keys.Enter)
+            { ShowFreeSummary(false); return true; }
             if (IsFreeExampleActive() && keyData == Keys.Enter
                 && ExampleRevealFlow.HasTypedAnswer(inputLine.Text))
             {
@@ -1792,7 +2138,7 @@ namespace EnglishDictationTool
                 RevealFreeDictationMeaning();
                 return true;
             }
-            if (IsFreeDictationActive() && keyData == (Keys)freePronunciationSettings.replayKey)
+            if (currentWord != null && keyData == (Keys)freePronunciationSettings.replayKey)
             {
                 string error;
                 if (!freePronouncer.Speak(GameEngine.CleanEnglish(currentWord), out error)
@@ -1814,7 +2160,30 @@ namespace EnglishDictationTool
                 ManualBackup();
                 return true;
             }
-            return base.ProcessCmdKey(ref msg, keyData);
+            return false;
+        }
+
+        private void OpenFreePracticeWindow()
+        {
+            if (freePracticeWindow == null || freePracticeWindow.IsDisposed) return;
+            if (!freePracticeWindow.Visible) freePracticeWindow.Show(this);
+            else freePracticeWindow.Activate();
+            freePracticeWindow.BringToFront();
+            if (practice.Current != null && practice.Current.active && currentWord == null)
+                RestoreFreePracticeIfNeeded();
+            if (freePaused && practice.Current != null && practice.Current.active)
+                BeginFreePauseOverlay(false);
+            else if (inputLine != null && inputLine.Enabled) inputLine.Focus();
+            if (freeLearningTimer != null) freeLearningTimer.Refresh();
+        }
+
+        private void SaveFreePracticeWindowState()
+        {
+            if (practice.Current != null && practice.Current.active)
+                practice.SavePosition(engine, inputLine == null ? string.Empty : inputLine.Text,
+                    exampleRevealStage, freeDictationMeaningShown, freePaused);
+            if (freePronouncer != null) freePronouncer.Stop();
+            if (freeLearningTimer != null) freeLearningTimer.Refresh();
         }
 
         private void UpdateDailyButtons()
@@ -1823,11 +2192,11 @@ namespace EnglishDictationTool
             StudyList newActive = study.ActiveFor("new");
             StudyList listActive = study.ActiveFor("list_review");
             StudyList problemActive = study.ActiveFor("problem_review");
-            dailyNewButton.Text = newActive == null ? "开始新学 · " + study.Settings.newCount + " 词"
+            dailyNewButton.Text = newActive == null ? "开始新学（" + study.Settings.newCount + " 词）"
                 : "继续新学";
-            dailyListButton.Text = listActive == null ? "开始复习 · " + study.Settings.listCount + " 列表"
+            dailyListButton.Text = listActive == null ? "开始复习（" + study.Settings.listCount + " 列表）"
                 : "继续列表复习";
-            dailyProblemButton.Text = problemActive == null ? "开始复习 · " + study.Settings.problemCount + " 词"
+            dailyProblemButton.Text = problemActive == null ? "开始复习（" + study.Settings.problemCount + " 词）"
                 : "继续错词复习";
             dailyNewEndButton.Visible = newActive != null;
             dailyListEndButton.Visible = listActive != null;
@@ -1839,19 +2208,27 @@ namespace EnglishDictationTool
             Func<string, int> answered = kind => todayLists.Where(x => x.kind == kind)
                 .Sum(x => x.items.Count(y => y.firstAnsweredAt != DateTime.MinValue
                     && StudyStore.StudyDayKey(y.firstAnsweredAt) == today));
-            dailyProgress.Text = "今日已作答  新学 " + answered("new") + "  ·  列表 "
-                + answered("list_review") + "\n错题复习 " + answered("problem_review")
-                + "  ·  新学列表 " + todayLists.Count(x => x.kind == "new");
+            if (dailyNewMetric != null) dailyNewMetric.Value = answered("new").ToString();
+            if (dailyListMetric != null) dailyListMetric.Value = answered("list_review").ToString();
+            if (dailyProblemMetric != null) dailyProblemMetric.Value = answered("problem_review").ToString();
+            if (dailyListsMetric != null)
+                dailyListsMetric.Value = todayLists.Count(x => x.kind == "new").ToString();
+            RefreshModeSelection();
         }
 
         private void OpenStudySettings()
         {
             using (StudySettingsForm form = new StudySettingsForm(study, notebooks, loader,
-                backups, appearance, settingsPanel))
+                backups, appearance, settingsPanel, CollectFreeSettingsControls))
             {
                 try { form.ShowDialog(this); }
                 finally { form.DetachFreeSettings(); }
             }
+            RefreshAfterSettings();
+        }
+
+        private void RefreshAfterSettings()
+        {
             ApplyAppearance();
             PopulateBooks();
             ApplyFreeSettingsControls();
@@ -1881,6 +2258,29 @@ namespace EnglishDictationTool
             orderSequential.Checked = study.Settings.freeQuestionOrder == "sequential";
             orderUnitRandom.Checked = study.Settings.freeQuestionOrder == "unit_random";
             orderRandom.Checked = study.Settings.freeQuestionOrder == "book_random";
+            contentAll.Checked = study.Settings.freeContentMode == "all";
+            contentWords.Checked = study.Settings.freeContentMode == "words_only";
+            contentPhrases.Checked = study.Settings.freeContentMode == "phrases_only";
+            showFirstLetter.Checked = study.Settings.freeShowFirstLetter;
+            retryOnWrong.Checked = study.Settings.freeRetryOnWrong;
+        }
+
+        private void CollectFreeSettingsControls(StudySettings target, bool includePracticeChoices)
+        {
+            if (target == null || bookCombo == null || unitList == null) return;
+            target.freeBook = bookCombo.Text ?? string.Empty;
+            target.freeUnits = unitList.CheckedItems.Cast<object>()
+                .Select(item => item.ToString()).ToList();
+            target.freeContentMode = contentWords.Checked ? "words_only"
+                : contentPhrases.Checked ? "phrases_only" : "all";
+            target.freeShowFirstLetter = showFirstLetter.Checked;
+            target.freeRetryOnWrong = retryOnWrong.Checked;
+            if (!includePracticeChoices) return;
+            target.freeExample = questionExample.Checked;
+            target.freeDictation = questionDictation.Checked;
+            target.freeSpelling = questionWord.Checked;
+            target.freeQuestionOrder = orderUnitRandom.Checked ? "unit_random"
+                : orderRandom.Checked ? "book_random" : "sequential";
         }
 
         private bool EnsureDictationAvailable(string kind, bool free)
@@ -1989,6 +2389,8 @@ namespace EnglishDictationTool
 
         private void UndoStudy()
         {
+            if (freeSummary != null || freePaused) return;
+            bool wasFeedback = freeFeedback != null;
             WordEntry word = study.Undo();
             if (word != null && study.Active == null && engine.CurrentDeck != null
                 && engine.CurrentDeck.Count > 0)
@@ -2000,6 +2402,7 @@ namespace EnglishDictationTool
             AppendToLog(word == null ? "没有可撤销的每日学习操作。" :
                 "已撤销：" + GameEngine.CleanEnglish(word), "normal");
             UpdateDailyButtons();
+            if (wasFeedback && word != null) { practice.SaveFeedback(null); AskNextQuestion(); }
         }
 
         private static string ShortcutText(Keys shortcut)
@@ -2097,6 +2500,7 @@ namespace EnglishDictationTool
 
         private void MasterCurrentWord()
         {
+            if (freeFeedback != null || freePaused || freeSummary != null) return;
             if (engine.GetNextQuestion() != null) study.CaptureExternalUndo(engine.GetNextQuestion());
             WordEntry mastered = engine.MasterCurrent();
             if (mastered == null)
@@ -2199,38 +2603,219 @@ namespace EnglishDictationTool
             ModernButton button = new ModernButton();
             button.Text = text;
             button.Width = 340;
-            button.Height = 42;
+            button.Height = 46;
             button.Margin = new Padding(3, 6, 3, 0);
             return button;
         }
 
-        private static void PlaceCardButtons(ModernCard card, Button primary, Button end)
+        private void RefreshModeSelection()
         {
-            primary.Height = 42;
-            end.Height = 42;
-            primary.Margin = Padding.Empty;
-            end.Margin = Padding.Empty;
-            card.Controls.Add(primary);
-            card.Controls.Add(end);
-            EventHandler position = delegate
+            if (studyModeWheel == null || modeActionHost == null || dailyNewButton == null) return;
+            string key = studyModeWheel.SelectedKey;
+            StudyList newActive = study.ActiveFor("new");
+            StudyList listActive = study.ActiveFor("list_review");
+            StudyList problemActive = study.ActiveFor("problem_review");
+            bool freeActive = practice.Current != null && practice.Current.active;
+
+            foreach (Control control in modeActionHost.Controls) control.Visible = false;
+            if (key == "list_review")
             {
-                int available = Math.Max(180, card.ClientSize.Width - 42);
-                int y = Math.Max(142, card.ClientSize.Height - 65);
-                if (!end.Visible)
-                {
-                    primary.Width = available;
-                    primary.Location = new Point(21, y);
-                    return;
-                }
-                int endWidth = Math.Min(118, Math.Max(94, available / 3));
-                primary.Width = Math.Max(100, available - endWidth - 8);
-                end.Width = endWidth;
-                primary.Location = new Point(21, y);
-                end.Location = new Point(21 + primary.Width + 8, y);
-            };
-            card.Resize += position;
-            end.VisibleChanged += position;
-            position(card, EventArgs.Empty);
+                modeEyebrow.Text = "02  REVIEW";
+                modeTitle.Text = "回顾列表";
+                modeDescription.Text = "按时间回看最近学过的单词。";
+                modeStatus.Text = listActive == null ? "从历史列表中按设定数量开始复习"
+                    : "检测到未完成的列表，可继续或手动结束";
+                dailyListButton.Visible = true;
+                dailyListEndButton.Visible = listActive != null;
+            }
+            else if (key == "problem_review")
+            {
+                modeEyebrow.Text = "03  FOCUS";
+                modeTitle.Text = "攻克错词";
+                modeDescription.Text = "集中练习错题与易错词。";
+                modeStatus.Text = problemActive == null ? "按优先级混合抽取错题本与易错本"
+                    : "检测到未完成的错词复习，可继续或手动结束";
+                dailyProblemButton.Visible = true;
+                dailyProblemEndButton.Visible = problemActive != null;
+            }
+            else if (key == "free")
+            {
+                modeEyebrow.Text = "04  FREE PRACTICE";
+                modeTitle.Text = "自由练习";
+                modeDescription.Text = "自行选择词书、单元、顺序和题型。";
+                modeStatus.Text = freeActive ? (freePaused
+                    ? "检测到已暂停的练习"
+                    : "自由练习进行中")
+                    : "练习范围与题型可在设置中调整";
+                freeModeButton.Text = freeActive ? "打开并继续自由练习" : "打开自由练习窗口";
+                freeModeButton.Visible = true;
+            }
+            else
+            {
+                modeEyebrow.Text = "01  NEW WORDS";
+                modeTitle.Text = "学习新词";
+                modeDescription.Text = "按词书抽取，先看后练。";
+                modeStatus.Text = newActive == null ? "完成展示后进入所选题型练习"
+                    : "检测到未完成的新学列表，可继续或手动结束";
+                dailyNewButton.Visible = true;
+                dailyNewEndButton.Visible = newActive != null;
+            }
+            LayoutModeActions();
+            SyncHomeDashboard();
+        }
+
+        private Button CurrentHomeAction(bool secondary)
+        {
+            if (studyModeWheel == null) return null;
+            string key = studyModeWheel.SelectedKey;
+            if (key == "list_review") return secondary ? dailyListEndButton : dailyListButton;
+            if (key == "problem_review") return secondary ? dailyProblemEndButton : dailyProblemButton;
+            if (key == "free") return secondary ? null : freeModeButton;
+            return secondary ? dailyNewEndButton : dailyNewButton;
+        }
+
+        private void ExecuteHomeAction(bool secondary)
+        {
+            if (studyModeWheel == null) return;
+            string key = studyModeWheel.SelectedKey;
+            if (secondary)
+            {
+                StudyList active = study.ActiveFor(key);
+                if (active != null && key != "free") EndDaily(key);
+                return;
+            }
+            if (key == "list_review") StartDailyList();
+            else if (key == "problem_review") StartDailyProblems();
+            else if (key == "free") OpenFreePracticeWindow();
+            else StartDailyNew();
+        }
+
+        private void SyncHomeDashboard()
+        {
+            if (homeDashboard == null || studyModeWheel == null || modeEyebrow == null) return;
+            Button primary = CurrentHomeAction(false);
+            Button secondary = CurrentHomeAction(true);
+            homeDashboard.UpdateState(new[]
+            {
+                dailyNewMetric == null ? "0" : dailyNewMetric.Value,
+                dailyListMetric == null ? "0" : dailyListMetric.Value,
+                dailyProblemMetric == null ? "0" : dailyProblemMetric.Value,
+                dailyListsMetric == null ? "0" : dailyListsMetric.Value
+            }, studyModeWheel.SelectedKey, modeEyebrow.Text, modeTitle.Text,
+                modeDescription.Text, modeStatus.Text,
+                primary == null ? string.Empty : primary.Text,
+                primary != null && primary.Enabled,
+                secondary == null ? string.Empty : secondary.Text,
+                secondary != null && secondary.Visible);
+        }
+
+        private void ApplyResponsiveHomeLayout(TableLayoutPanel shell, ModernHeader header,
+            ModernCard metricsCard, ModernCard modeCard, TableLayoutPanel modeDetail,
+            ModernButton help, ModernButton settingsEntry)
+        {
+            int width = Math.Max(ClientSize.Width, shell.ClientSize.Width);
+            int layoutClass = width >= 1700 ? 2 : width >= 1200 ? 1 : 0;
+            if (layoutClass == homeLayoutClass)
+            {
+                LayoutModeActions();
+                return;
+            }
+            homeLayoutClass = layoutClass;
+
+            int headerHeight = layoutClass == 2 ? 220 : layoutClass == 1 ? 188 : 165;
+            int metricsHeight = layoutClass == 2 ? 176 : layoutClass == 1 ? 158 : 146;
+            int outerX = layoutClass == 2 ? 36 : layoutClass == 1 ? 30 : 28;
+            shell.Padding = new Padding(outerX, layoutClass == 2 ? 24 : layoutClass == 1 ? 16 : 14,
+                outerX, layoutClass == 2 ? 30 : 26);
+            shell.RowStyles[0].Height = headerHeight;
+            shell.RowStyles[1].Height = metricsHeight;
+            metricsCard.Padding = layoutClass == 2 ? new Padding(18, 12, 18, 12)
+                : new Padding(12, 8, 12, 8);
+            modeCard.Padding = layoutClass == 2 ? new Padding(42)
+                : layoutClass == 1 ? new Padding(34) : new Padding(28);
+
+            float eyebrowSize = layoutClass == 2 ? 12f : layoutClass == 1 ? 10f : 8.5f;
+            float titleSize = layoutClass == 2 ? 34f : layoutClass == 1 ? 28f : 24f;
+            float descriptionSize = layoutClass == 2 ? 16f : layoutClass == 1 ? 13f : 11f;
+            float statusSize = layoutClass == 2 ? 13f : layoutClass == 1 ? 10f : 8.5f;
+            modeEyebrow.Font = new Font("Segoe UI", eyebrowSize, FontStyle.Bold);
+            modeTitle.Font = new Font("Segoe UI", titleSize, FontStyle.Bold);
+            modeDescription.Font = new Font("Segoe UI", descriptionSize, FontStyle.Regular);
+            modeStatus.Font = new Font("Segoe UI", statusSize, FontStyle.Regular);
+
+            int detailX = layoutClass == 2 ? 68 : layoutClass == 1 ? 50 : 32;
+            modeDetail.Padding = new Padding(detailX, 14, detailX, 14);
+            int[] rowHeights = layoutClass == 2
+                ? new[] { 42, 92, 72, 62, 76 }
+                : layoutClass == 1 ? new[] { 34, 72, 60, 52, 64 }
+                : new[] { 30, 64, 52, 48, 58 };
+            for (int index = 0; index < rowHeights.Length; index++)
+                modeDetail.RowStyles[index + 1].Height = rowHeights[index];
+
+            int utilityWidth = layoutClass == 2 ? 132 : layoutClass == 1 ? 118 : 108;
+            int utilityHeight = layoutClass == 2 ? 54 : layoutClass == 1 ? 50 : 46;
+            float utilityFont = layoutClass == 2 ? 12f : layoutClass == 1 ? 10.5f : 9.5f;
+            foreach (ModernButton button in new[] { help, settingsEntry })
+            {
+                button.Size = new Size(utilityWidth, utilityHeight);
+                button.Font = new Font("Segoe UI", utilityFont, FontStyle.Bold);
+            }
+            int utilityY = Math.Max(18, (header.Height - utilityHeight) / 2);
+            settingsEntry.Location = new Point(header.Width - settingsEntry.Width - 10, utilityY);
+            help.Location = new Point(settingsEntry.Left - help.Width - 14, utilityY);
+            LayoutContactLinks(settingsEntry);
+
+            float actionFont = layoutClass == 2 ? 13f : layoutClass == 1 ? 11f : 9.5f;
+            foreach (Control control in modeActionHost.Controls)
+                control.Font = new Font("Segoe UI", actionFont, FontStyle.Bold);
+            dailyNewMetric.Invalidate();
+            dailyListMetric.Invalidate();
+            dailyProblemMetric.Invalidate();
+            dailyListsMetric.Invalidate();
+            studyModeWheel.Invalidate();
+            header.Invalidate();
+            LayoutModeActions();
+        }
+
+        private void LayoutModeActions()
+        {
+            if (modeActionHost == null || studyModeWheel == null || dailyNewButton == null) return;
+            Control primary;
+            Control secondary = null;
+            string key = studyModeWheel.SelectedKey;
+            if (key == "list_review")
+            {
+                primary = dailyListButton;
+                if (study.ActiveFor("list_review") != null) secondary = dailyListEndButton;
+            }
+            else if (key == "problem_review")
+            {
+                primary = dailyProblemButton;
+                if (study.ActiveFor("problem_review") != null) secondary = dailyProblemEndButton;
+            }
+            else if (key == "free")
+                primary = freeModeButton;
+            else
+            {
+                primary = dailyNewButton;
+                if (study.ActiveFor("new") != null) secondary = dailyNewEndButton;
+            }
+            int availableWidth = Math.Max(120, modeActionHost.ClientSize.Width);
+            int width = Math.Min(ClientSize.Width >= 1700 ? 820 : availableWidth, availableWidth);
+            int x = Math.Max(0, (availableWidth - width) / 2);
+            int targetHeight = ClientSize.Width >= 1700 ? 62 : ClientSize.Width >= 1200 ? 52 : 46;
+            int height = Math.Min(targetHeight, Math.Max(38, modeActionHost.ClientSize.Height - 2));
+            int y = Math.Max(0, (modeActionHost.ClientSize.Height - height) / 2);
+            if (secondary == null)
+            {
+                primary.Bounds = new Rectangle(x, y, width, height);
+                return;
+            }
+            int gap = 9;
+            int endWidth = Math.Min(ClientSize.Width >= 1700 ? 170 : 132,
+                Math.Max(104, width / 3));
+            primary.Bounds = new Rectangle(x, y, Math.Max(120, width - endWidth - gap), height);
+            secondary.Bounds = new Rectangle(x + width - endWidth, y, endWidth, height);
         }
 
         private void PopulateBooks()
@@ -2238,17 +2823,32 @@ namespace EnglishDictationTool
             List<string> books = loader.GetAvailableBooks();
             bookCombo.Items.Clear();
             bookCombo.Items.AddRange(books.Cast<object>().ToArray());
-            if (bookCombo.Items.Count > 0) bookCombo.SelectedIndex = 0;
+            if (bookCombo.Items.Count > 0)
+            {
+                int saved = books.FindIndex(x => string.Equals(x, study.Settings.freeBook,
+                    StringComparison.OrdinalIgnoreCase));
+                bookCombo.SelectedIndex = saved >= 0 ? saved : 0;
+            }
             else ShowDarkDialog("警告", "在 data 目录中未找到任何包含 CSV 的词书。", false);
         }
 
         private void PopulateUnits()
         {
             unitList.Items.Clear();
+            bool useSaved = string.Equals(bookCombo.Text, study.Settings.freeBook,
+                StringComparison.OrdinalIgnoreCase)
+                && study.Settings.freeUnits != null && study.Settings.freeUnits.Count > 0;
+            int selected = 0;
             foreach (string unit in loader.GetUnitsForBook(bookCombo.Text))
             {
-                unitList.Items.Add(unit, true);
+                bool isChecked = !useSaved || study.Settings.freeUnits.Any(x =>
+                    string.Equals(x, unit, StringComparison.OrdinalIgnoreCase));
+                unitList.Items.Add(unit, isChecked);
+                if (isChecked) selected++;
             }
+            if (useSaved && selected == 0)
+                for (int index = 0; index < unitList.Items.Count; index++)
+                    unitList.SetItemChecked(index, true);
         }
 
         private Dictionary<string, string> LoadKeybindings()
@@ -2286,6 +2886,7 @@ namespace EnglishDictationTool
 
         private void StartGame()
         {
+            ClearFreeSummary();
             if (practice.Current != null && practice.Current.active)
             {
                 RestoreFreePracticeIfNeeded();
@@ -2311,10 +2912,7 @@ namespace EnglishDictationTool
                 contentPhrases.Checked ? "phrases_only" : "all";
             string orderMode = orderUnitRandom.Checked ? "unit_random"
                 : orderRandom.Checked ? "book_random" : "sequential";
-            study.Settings.freeExample = questionExample.Checked;
-            study.Settings.freeDictation = questionDictation.Checked;
-            study.Settings.freeSpelling = questionWord.Checked;
-            study.Settings.freeQuestionOrder = orderMode;
+            CollectFreeSettingsControls(study.Settings, true);
             study.SaveSettings();
             engine.StartGame(bookCombo.Text, selectedUnits, filterMode, orderMode,
                 questionExample.Checked, questionDictation.Checked && !freeDictationTemporarilyDisabled,
@@ -2327,9 +2925,12 @@ namespace EnglishDictationTool
                 return;
             }
             practice.Begin(engine);
+            freeFeedback = null; freeEndButton.Enabled = true;
             freePaused = false;
             freePauseButton.Visible = true;
             freeStartButton.Visible = false;
+            studyModeWheel.SelectMode("free");
+            RefreshModeSelection();
             StartFreeTimer(0);
 
             logArea.ClearContent();
@@ -2338,10 +2939,12 @@ namespace EnglishDictationTool
                 string.Join(", ", selectedUnits)), "normal");
             inputLine.Enabled = true;
             AskNextQuestion();
+            OpenFreePracticeWindow();
         }
 
         private void StartReview()
         {
+            ClearFreeSummary();
             if (practice.Current != null && practice.Current.active)
             {
                 RestoreFreePracticeIfNeeded();
@@ -2353,9 +2956,12 @@ namespace EnglishDictationTool
                 return;
             }
             practice.Begin(engine);
+            freeFeedback = null; freeEndButton.Enabled = true;
             freePaused = false;
             freePauseButton.Visible = true;
             freeStartButton.Visible = false;
+            studyModeWheel.SelectMode("free");
+            RefreshModeSelection();
             StartFreeTimer(0);
 
             logArea.ClearContent();
@@ -2363,10 +2969,14 @@ namespace EnglishDictationTool
                 notebooks.ReviewFirstLetter ? "显示" : "不显示", notebooks.ReviewCorrectTarget), "normal");
             inputLine.Enabled = true;
             AskNextQuestion();
+            OpenFreePracticeWindow();
         }
 
         private void AskNextQuestion()
         {
+            freeFeedback = null; freeNextButton.Enabled = false; freeReplayButton.Enabled = false;
+            inputLine.Enabled = true;
+            logArea.ClearContent();
             currentWord = engine.GetNextQuestion();
             exampleRevealStage = 0;
             freeDictationMeaningShown = false;
@@ -2374,12 +2984,15 @@ namespace EnglishDictationTool
             {
                 if (freeLearningTimer != null) freeLearningTimer.StopAndCommit();
                 if (practice.Current != null && practice.Current.active) practice.FinishCurrent();
-                AppendToLog("\n--- 恭喜！本轮已全部完成！---", "correct");
+                AppendToLog("本轮已完成，按 Enter 查看结算。", "correct");
+                freeNextButton.Enabled = true; freeNextButton.Text = "查看结算";
+                freeEndButton.Enabled = false;
                 inputLine.Clear();
                 inputLine.Enabled = false;
                 freePauseButton.Visible = false;
                 freeStartButton.Visible = true;
                 freeStartButton.Text = "自由练习";
+                RefreshModeSelection();
                 freeProgress.Visible = true;
                 freeProgress.Total = Math.Max(1, engine.CurrentDeck.Count);
                 freeProgress.Completed = engine.CurrentDeck.Count;
@@ -2446,6 +3059,7 @@ namespace EnglishDictationTool
                 }
             }
 
+            freeReplayButton.Enabled = currentWord != null && freePronunciationSettings.enabled;
             inputLine.Clear();
             inputLine.Focus();
             if (practice.Current != null && practice.Current.active)
@@ -2460,13 +3074,13 @@ namespace EnglishDictationTool
 
         private bool IsFreeExampleActive()
         {
-            return currentWord != null && engine.QuestionMode == "example"
+            return freeFeedback == null && currentWord != null && engine.QuestionMode == "example"
                 && engine.GetExampleQuestion() != null;
         }
 
         private bool IsFreeDictationActive()
         {
-            return currentWord != null && engine.QuestionMode == "dictation";
+            return freeFeedback == null && currentWord != null && engine.QuestionMode == "dictation";
         }
 
         private void RevealFreeDictationMeaning()
@@ -2534,6 +3148,7 @@ namespace EnglishDictationTool
 
         private void SubmitAnswer()
         {
+            if (freeFeedback != null || freePaused || freeSummary != null) return;
             if (IsFreeExampleActive() && !ExampleRevealFlow.ReadyToSubmit(exampleRevealStage,
                 study.Settings.exampleFirstLetterHints)) return;
             string userInput = inputLine.Text.Trim();
@@ -2562,50 +3177,107 @@ namespace EnglishDictationTool
             if (practice.Current != null && practice.Current.active)
                 practice.RecordAttempt(answeredWord, answeredMode, answeredIndex,
                     outcome.Correct, DateTime.Now);
+            if (!outcome.Correct && (engine.RetryOnWrong || engine.GetNextQuestion() == null)) engine.CurrentIndex--;
+            freeFeedback = new AnswerFeedback { word = answeredWord, answer = outcome.CorrectAnswer,
+                input = userInput, mode = answeredMode, correct = outcome.Correct,
+                difference = outcome.Correct ? string.Empty : SpellingDifference.Report(userInput, accepted) };
+            practice.SavePosition(engine, string.Empty, 0, false, false);
+            practice.SaveFeedback(freeFeedback);
+            if (engine.GetNextQuestion() == null)
+            {
+                if (freeLearningTimer != null) freeLearningTimer.StopAndCommit();
+                practice.FinishCurrent();
+            }
+            UpdateReviewButtonCount();
             if (outcome.Correct)
             {
-                AppendToLog(appearance.Prompt("correct", answeredWord, userInput,
-                    outcome.CorrectAnswer), "correct");
-                if (outcome.MovedToErrorProne)
-                    AppendToLog("  已达标，移入易错本。", "normal");
-                else if (engine.IsReviewMode)
-                    AppendToLog(string.Format("  连续答对 {0}/{1} 次。",
-                        outcome.CorrectCount, notebooks.ReviewCorrectTarget), "normal");
-                if (answeredMode == "dictation")
-                {
-                    AppendToLog("  正确英文：" + outcome.CorrectAnswer, "word");
-                    AppendToLog("  中文释义：" + PartOfSpeech.DisplayChinese(answeredWord), "meaning");
-                }
-                UpdateReviewButtonCount();
+                freePronouncer.Stop(); freeFeedback = null; practice.SaveFeedback(null);
                 AskNextQuestion();
+                return;
             }
-            else
-            {
-                AppendToLog(appearance.Prompt("error", answeredWord, userInput,
-                    outcome.CorrectAnswer), "error");
-                string difference = SpellingDifference.Report(userInput, accepted);
-                if (!string.IsNullOrWhiteSpace(difference)) AppendToLog(difference, "error");
-                if (answeredMode == "dictation")
-                {
-                    AppendToLog("  正确英文：" + outcome.CorrectAnswer, "word");
-                    AppendToLog("  中文释义：" + PartOfSpeech.DisplayChinese(answeredWord), "meaning");
-                }
-                UpdateReviewButtonCount();
-                if (engine.RetryOnWrong)
-                {
-                    engine.CurrentIndex--;
-                    AppendToLog("  请重试！", "normal");
-                    inputLine.Clear();
-                    inputLine.Focus();
-                    freeProgress.Completed = Math.Min(engine.CurrentIndex, engine.CurrentDeck.Count);
-                    if (practice.Current != null && practice.Current.active)
-                        practice.SavePosition(engine, string.Empty, 0, false, freePaused);
-                }
-                else
-                {
-                    AskNextQuestion();
-                }
-            }
+            ShowFreeFeedback();
+            freeProgress.Completed = practice.Attempts.Where(x => x.sessionId == practice.Current.id && x.correct)
+                .Select(x => x.taskIndex).Distinct().Count();
+            if (!outcome.Correct) ReplayFreeWord();
+        }
+
+        private void LayoutContactLinks(Control settings)
+        {
+            if (githubLink == null) return;
+            githubLink.Location = new Point(settings.Right - githubLink.Width, settings.Bottom + 5);
+            emailLink.Location = new Point(settings.Right - emailLink.Width, githubLink.Bottom + 3);
+        }
+
+        private void OpenContact(string address)
+        {
+            try { Process.Start(new ProcessStartInfo(address) { UseShellExecute = true }); }
+            catch (Exception error) { ShowDarkDialog("无法打开链接", error.Message, false); }
+        }
+
+        private void ReplayFreeWord()
+        {
+            if (freePaused || !freePronunciationSettings.enabled) return;
+            WordEntry word = freeFeedback == null ? currentWord : freeFeedback.word;
+            if (word == null) return;
+            string error;
+            if (!freePronouncer.Speak(GameEngine.CleanEnglish(word), out error) && !string.IsNullOrEmpty(error))
+                AppendToLog(error, "normal");
+        }
+
+        private void ShowFreeFeedback()
+        {
+            if (freeFeedback == null) return;
+            currentWord = freeFeedback.word;
+            freeFeedback.Render(logArea, appearance);
+            inputLine.Clear(); inputLine.Enabled = false;
+            freeReplayButton.Enabled = freePronunciationSettings.enabled;
+            freeNextButton.Enabled = true;
+            freeNextButton.Text = engine.GetNextQuestion() == null ? "查看结算" : "下一题";
+            freeEndButton.Enabled = practice.Current != null && practice.Current.active;
+            freeNextButton.Focus();
+        }
+
+        private void ContinueFreeFeedback()
+        {
+            if (freePaused) return;
+            freePronouncer.Stop(); freeFeedback = null; practice.SaveFeedback(null);
+            if (engine.GetNextQuestion() == null) ShowFreeSummary(false);
+            else AskNextQuestion();
+        }
+
+        private void EndFreeList()
+        {
+            if (freePaused || practice.Current == null || !practice.Current.active) return;
+            string message = "确定结束当前自由练习列表并查看结算吗？"
+                + (study.Settings.backupBeforeManualEnd ? "\n结束前将创建手动备份，可在设置中关闭。" : "");
+            if (MessageBox.Show(freePracticeWindow, message, "结束列表", MessageBoxButtons.YesNo) != DialogResult.Yes) return;
+            if (study.Settings.backupBeforeManualEnd && !ManualBackup()) return;
+            ShowFreeSummary(true);
+        }
+
+        private void ShowFreeSummary(bool manual)
+        {
+            if (practice.Current == null || freeSummary != null) return;
+            if (freeLearningTimer != null) freeLearningTimer.StopAndCommit();
+            practice.SavePosition(engine, string.Empty, 0, false, false);
+            practice.FinishCurrent(); practice.SaveFeedback(null);
+            freeFeedback = null; freePronouncer.Stop();
+            freeSummary = new SessionSummaryView(SessionSummary.FromPractice(practice.Current, practice.Attempts, manual),
+                study.Settings.timerEnabled, study.Settings.timerPrecision);
+            freeSummary.SetAppearance(appearance, "free");
+            foreach (Control control in freePracticeWindow.Controls) control.Visible = false;
+            freePracticeWindow.Controls.Add(freeSummary); freeSummary.BringToFront(); freeSummary.Focus();
+            freeSummary.Visible = true;
+            RefreshModeSelection();
+        }
+
+        private void ClearFreeSummary()
+        {
+            if (freeSummary == null) return;
+            freePracticeWindow.Controls.Remove(freeSummary); freeSummary.Dispose(); freeSummary = null;
+            foreach (Control control in freePracticeWindow.Controls)
+                if (control != freePauseOverlay) control.Visible = true;
+            freeStartButton.Visible = true; freePauseButton.Visible = false;
         }
 
         private void HandleAction(string action)
@@ -2692,6 +3364,8 @@ namespace EnglishDictationTool
             PracticeSessionState session = practice.Current;
             if (session == null || !session.active || session.engine == null) return;
             practice.Resume(engine);
+            freeFeedback = session.feedback;
+            freeEndButton.Enabled = true;
             currentWord = engine.GetNextQuestion();
             if (currentWord == null)
             {
@@ -2710,23 +3384,23 @@ namespace EnglishDictationTool
             freeStartButton.Visible = false;
             freePauseButton.Visible = true;
             freePauseButton.Text = freePaused ? "继续自由练习" : "暂停自由练习";
+            studyModeWheel.SelectMode("free");
+            RefreshModeSelection();
             int[] current = engine.GetProgress();
             freeProgress.Visible = true;
             freeProgress.Total = Math.Max(1, current[1]);
             freeProgress.Completed = Math.Min(engine.CurrentIndex, current[1]);
             StartFreeTimer(session.activeMilliseconds);
-            if (freePaused)
-            {
-                if (Visible) BeginFreePauseOverlay(false);
-                else Shown += delegate { if (freePaused) BeginFreePauseOverlay(false); };
-            }
-            else inputLine.Focus();
+            if (freeFeedback != null) ShowFreeFeedback();
+            if (!freePaused && freePracticeWindow != null && freePracticeWindow.Visible)
+                inputLine.Focus();
         }
 
         private void StartFreeTimer(long initialMilliseconds)
         {
             if (freeLearningTimer != null) freeLearningTimer.Dispose();
-            freeLearningTimer = new LearningTimer(this, freeTimerLabel, initialMilliseconds,
+            freeLearningTimer = new LearningTimer(freePracticeWindow ?? (Control)this,
+                freeTimerLabel, initialMilliseconds,
                 study.Settings.timerEnabled, study.Settings.timerPrecision,
                 delegate { return !freePaused && practice.Current != null
                     && practice.Current.active && currentWord != null; },
@@ -2735,14 +3409,14 @@ namespace EnglishDictationTool
 
         private void ToggleFreePause()
         {
-            if (practice.Current == null || !practice.Current.active) return;
+            if (practice.Current == null || freeSummary != null) return;
             if (freePaused) ResumeFreePractice();
             else BeginFreePauseOverlay(true);
         }
 
         private void BeginFreePauseOverlay(bool persist)
         {
-            if (practice.Current == null || !practice.Current.active) return;
+            if (practice.Current == null || freeSummary != null) return;
             if (persist) practice.SavePosition(engine, inputLine.Text, exampleRevealStage,
                 freeDictationMeaningShown, true);
             if (freeLearningTimer != null) freeLearningTimer.StopAndCommit();
@@ -2750,16 +3424,17 @@ namespace EnglishDictationTool
             freePaused = true;
             inputLine.Enabled = false;
             freePauseOverlay.Visible = false;
-            freePauseOverlay.Prepare(this, appearance, "free");
+            freePauseOverlay.Prepare(freePracticeWindow ?? (Form)this, appearance, "free");
             freePauseOverlay.Visible = true;
             freePauseOverlay.BringToFront();
             freePauseButton.Text = "继续自由练习";
+            RefreshModeSelection();
             if (freeLearningTimer != null) freeLearningTimer.Refresh();
         }
 
         private void ResumeFreePractice()
         {
-            if (practice.Current == null || !practice.Current.active) return;
+            if (practice.Current == null || freeSummary != null) return;
             bool includesDictation = practice.Current.engine != null
                 && practice.Current.engine.modes != null
                 && practice.Current.engine.modes.Skip(engine.CurrentIndex).Any(x => x == "dictation");
@@ -2772,10 +3447,12 @@ namespace EnglishDictationTool
             freePaused = false;
             freePauseOverlay.Visible = false;
             freePauseButton.Text = "暂停自由练习";
+            RefreshModeSelection();
             inputLine.Enabled = true;
             practice.SavePosition(engine, inputLine.Text, exampleRevealStage,
                 freeDictationMeaningShown, false);
-            ReprintCurrentQuestion();
+            if (freeFeedback != null) ShowFreeFeedback();
+            else { logArea.ClearContent(); ReprintCurrentQuestion(); }
             if (freeLearningTimer != null) freeLearningTimer.Refresh();
             inputLine.Focus();
         }
@@ -2804,6 +3481,15 @@ namespace EnglishDictationTool
 
         private void ApplyAppearance()
         {
+            if (mainBackground != null)
+                mainBackground.SetAppearance(homeDashboard == null ? appearance : null, "main");
+            if (homeDashboard != null)
+            {
+                homeDashboard.SetAppearance(appearance);
+                homeDashboard.SetPlaybackActive(ContainsFocus && WindowState != FormWindowState.Minimized);
+            }
+            if (homeShell != null) homeShell.BackColor = Color.Transparent;
+            if (homeHeader != null) homeHeader.BackColor = Color.Transparent;
             logArea.SetAppearance(appearance, "free");
             TextAppearance input = appearance.Settings.text["normal"];
             inputLine.Font = AppearanceStore.CreateFont(input);
@@ -2830,12 +3516,18 @@ namespace EnglishDictationTool
                 + "未完成列表旁可选择“继续”或“结束列表”。手动结束时，已完成内容保留，未完成词会回到原来的候选范围。\n"
                 + "重新进入未完成列表时，会立即采用当前的题型设置。\n"
                 + "顶部“设置”可调整每日计划、题型顺序、快捷键、外观、统计、备份和更新；“词书管理”可以导入外部 CSV 或重命名词书。\n"
+                + "如需重新查看功能位置，请点击本窗口底部的“新手引导与功能导览”。\n"
                 + "学习窗口的“上一页”只用于回看；展示和答题阶段不能互相回退。\n"
-                + "默认采用深色背景，字体、提示文案和练习背景可在外观设置中修改。\n\n"
+                + "默认采用深色背景，字体、提示文案、主界面和练习背景可在外观设置中修改。\n\n"
                 + "项目与联系\n"
                 + "GitHub：https://github.com/kryptonite309/ZJU-English-dictation-tool_kry-advanced\n"
                 + "QQ 邮箱：1242532684@qq.com";
-            ShowDarkDialog("帮助", help, true);
+            using (HelpCenterForm dialog = new HelpCenterForm(help))
+            {
+                dialog.ShowDialog(this);
+                if (dialog.ReplayRequested && onboarding != null)
+                    onboarding.Begin(true);
+            }
         }
 
         private void ShowDarkDialog(string title, string message, bool large)
@@ -2930,6 +3622,15 @@ namespace EnglishDictationTool
                     return StudyTests.Run(args[1], args[2]);
                 }
 
+                if (args.Length >= 2 && args[0] == "--test-v131")
+                    return V131Tests.Run(args[1]);
+
+                if (args.Length >= 2 && args[0] == "--test-v134")
+                    return V134Tests.Run(args[1]);
+
+                if (args.Length >= 2 && args[0] == "--test-v135")
+                    return V135Tests.Run(args[1]);
+
                 if (args.Length >= 3 && args[0] == "--test-v120")
                 {
                     return V120Tests.Run(args[1], args[2]);
@@ -2958,9 +3659,35 @@ namespace EnglishDictationTool
                     return RenderPreview(args[1], args.Length >= 3 ? args[2] : null);
                 }
 
+                if (args.Length >= 3 && args[0] == "--render-onboarding")
+                {
+                    return RenderOnboarding(args[1], args[2]);
+                }
+
+                if (args.Length >= 2 && args[0] == "--layout-report")
+                {
+                    using (MainForm form = new MainForm())
+                    {
+                        form.StartPosition = FormStartPosition.Manual;
+                        form.Location = new Point(-30000, -30000);
+                        form.ClientSize = new Size(1280, 820);
+                        form.Show();
+                        Application.DoEvents();
+                        File.WriteAllText(args[1], form.HomeLayoutReport());
+                        form.Close();
+                    }
+                    return 0;
+                }
+
                 if (args.Length >= 2 && args[0] == "--render-main-settings")
                 {
                     using (MainForm form = new MainForm()) form.SaveSettingsPreview(args[1]);
+                    return 0;
+                }
+
+                if (args.Length >= 2 && args[0] == "--render-free-practice")
+                {
+                    using (MainForm form = new MainForm()) form.SaveFreePracticePreview(args[1]);
                     return 0;
                 }
 
@@ -2994,7 +3721,7 @@ namespace EnglishDictationTool
 
                 if (args.Length >= 2 && args[0] == "--render-statistics")
                 {
-                    return RenderStatistics(args[1]);
+                    return RenderStatistics(args[1], args.Length >= 3 ? args[2] : null);
                 }
 
                 Application.Run(new MainForm());
@@ -3248,6 +3975,8 @@ namespace EnglishDictationTool
                 form.PrepareColorPreview();
                 form.StartPosition = FormStartPosition.Manual;
                 form.Location = new Point(-20000, -20000);
+                if (mode == "compact") form.ClientSize = new Size(1100, 720);
+                else if (mode == "wide") form.Size = new Size(2560, 1600);
                 form.Show();
                 Application.DoEvents();
                 if (mode == "bottom")
@@ -3354,6 +4083,40 @@ namespace EnglishDictationTool
             return 0;
         }
 
+        private static int RenderOnboarding(string outputFile, string kind)
+        {
+            Form form;
+            if (string.Equals(kind, "welcome", StringComparison.OrdinalIgnoreCase))
+                form = new OnboardingWelcomeForm(false, 0, OnboardingController.StepCount);
+            else if (string.Equals(kind, "replay-skip", StringComparison.OrdinalIgnoreCase))
+                form = new OnboardingSkipForm(Keys.Alt | Keys.J, true);
+            else if (string.Equals(kind, "skip-success", StringComparison.OrdinalIgnoreCase))
+                form = new OnboardingSkipSuccessForm(false);
+            else
+            {
+                OnboardingStep[] steps = OnboardingController.StepsForTests();
+                int index = string.Equals(kind, "action", StringComparison.OrdinalIgnoreCase)
+                    ? 6 : steps.Length - 1;
+                form = new GuideCalloutForm(steps[index], index, steps.Length,
+                    OnboardingController.ChapterCount, false,
+                    string.IsNullOrEmpty(steps[index].RequiredAction));
+            }
+            using (form)
+            {
+                form.StartPosition = FormStartPosition.Manual;
+                form.Location = new Point(-20000, -20000);
+                form.Show();
+                Application.DoEvents();
+                using (Bitmap image = new Bitmap(form.Width, form.Height))
+                {
+                    form.DrawToBitmap(image, new Rectangle(Point.Empty, form.Size));
+                    image.Save(outputFile, ImageFormat.Png);
+                }
+                form.Close();
+            }
+            return 0;
+        }
+
         private static int RenderAppearance(string outputFile, string tab)
         {
             using (AppearanceSettingsForm form = new AppearanceSettingsForm(
@@ -3374,7 +4137,7 @@ namespace EnglishDictationTool
             return 0;
         }
 
-        private static int RenderStatistics(string outputFile)
+        private static int RenderStatistics(string outputFile, string mode)
         {
             string root = AppPaths.FindProjectRoot();
             DataLoader loader = new DataLoader(Path.Combine(root, "data"));
@@ -3385,6 +4148,13 @@ namespace EnglishDictationTool
             {
                 form.StartPosition = FormStartPosition.Manual;
                 form.Location = new Point(-20000, -20000);
+                if (mode == "calendar" || mode == "calendar-small")
+                    form.SelectCalendarForTests();
+                if (mode == "calendar-small")
+                {
+                    form.MinimumSize = Size.Empty;
+                    form.ClientSize = new Size(1280, 640);
+                }
                 form.Show(); Application.DoEvents();
                 using (Bitmap image = new Bitmap(form.Width, form.Height))
                 {

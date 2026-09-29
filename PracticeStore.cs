@@ -29,6 +29,7 @@ namespace EnglishDictationTool
         public int revealStage { get; set; }
         public bool dictationMeaningShown { get; set; }
         public long activeMilliseconds { get; set; }
+        public AnswerFeedback feedback { get; set; }
     }
 
     internal sealed class PracticeState
@@ -122,6 +123,13 @@ namespace EnglishDictationTool
         {
             if (state.current == null || !state.current.active) return;
             state.current.paused = paused;
+            Save();
+        }
+
+        public void SaveFeedback(AnswerFeedback feedback)
+        {
+            if (state.current == null) return;
+            state.current.feedback = feedback;
             Save();
         }
 

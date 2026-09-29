@@ -75,14 +75,14 @@ namespace EnglishDictationTool
             controls.Controls.Add(summary);
             layout.Controls.Add(controls, 0, 0);
 
-            words = new ListView();
+            words = new ModernListView();
             words.Dock = DockStyle.Fill;
             words.View = View.Details;
             words.FullRowSelect = true;
             words.HideSelection = false;
             words.MultiSelect = false;
             words.ShowItemToolTips = true;
-            words.BackColor = Theme.Surface;
+            words.BackColor = ModernUI.Card;
             words.ForeColor = Theme.Text;
             words.Columns.Add("英文", 250);
             words.Columns.Add("所属单词本", 140);

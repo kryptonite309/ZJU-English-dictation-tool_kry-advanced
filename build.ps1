@@ -18,6 +18,20 @@ if (-not $speechAssembly) {
     throw "未找到 Windows .NET Framework 的 System.Speech.dll"
 }
 
+function Find-FrameworkAssembly([string]$name) {
+    $assembly = Get-ChildItem -LiteralPath "$env:WINDIR\Microsoft.NET\assembly" `
+        -Filter $name -Recurse -File -ErrorAction SilentlyContinue |
+        Sort-Object FullName -Descending | Select-Object -First 1
+    if (-not $assembly) { throw "未找到 Windows .NET Framework 组件: $name" }
+    return $assembly.FullName
+}
+
+$windowsBase = Find-FrameworkAssembly "WindowsBase.dll"
+$presentationCore = Find-FrameworkAssembly "PresentationCore.dll"
+$presentationFramework = Find-FrameworkAssembly "PresentationFramework.dll"
+$windowsFormsIntegration = Find-FrameworkAssembly "WindowsFormsIntegration.dll"
+$systemXaml = Find-FrameworkAssembly "System.Xaml.dll"
+
 New-Item -ItemType Directory -Force -Path $outputDirectoryPath | Out-Null
 
 & $compiler `
@@ -36,8 +50,16 @@ New-Item -ItemType Directory -Force -Path $outputDirectoryPath | Out-Null
     /reference:"$($speechAssembly.FullName)" `
     /reference:System.Windows.Forms.dll `
     /reference:System.Web.Extensions.dll `
+    /reference:"$windowsBase" `
+    /reference:"$presentationCore" `
+    /reference:"$presentationFramework" `
+    /reference:"$windowsFormsIntegration" `
+    /reference:"$systemXaml" `
     "$sourceDirectory\Main.cs" `
     "$sourceDirectory\ModernUI.cs" `
+    "$sourceDirectory\HomeDashboard.cs" `
+    "$sourceDirectory\OnboardingGuide.cs" `
+    "$sourceDirectory\VideoBackground.cs" `
     "$sourceDirectory\NotebookStore.cs" `
     "$sourceDirectory\NotebookManagerForm.cs" `
     "$sourceDirectory\NotebookTests.cs" `
@@ -54,7 +76,11 @@ New-Item -ItemType Directory -Force -Path $outputDirectoryPath | Out-Null
     "$sourceDirectory\PracticeStore.cs" `
     "$sourceDirectory\StatisticsForm.cs" `
     "$sourceDirectory\UpdateService.cs" `
-    "$sourceDirectory\V120Tests.cs"
+    "$sourceDirectory\V120Tests.cs" `
+    "$sourceDirectory\SessionFeedback.cs" `
+    "$sourceDirectory\V131Tests.cs" `
+    "$sourceDirectory\V134Tests.cs" `
+    "$sourceDirectory\V135Tests.cs"
 
 if ($LASTEXITCODE -ne 0) {
     throw "构建失败，退出代码: $LASTEXITCODE"

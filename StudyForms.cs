@@ -38,7 +38,7 @@ namespace EnglishDictationTool
             foreach (string book in loader.GetAvailableBooks())
             {
                 int available = remaining.ContainsKey(book) ? remaining[book] : 0;
-                string description = book + "  ·  未提取 " + available;
+                string description = book + "    未提取 " + available;
                 int labelHeight = Math.Max(36, TextRenderer.MeasureText(description,
                     Theme.UiFont, new Size(400, int.MaxValue), TextFormatFlags.WordBreak).Height + 6);
                 Label label = new Label { Text = description,
@@ -121,6 +121,9 @@ namespace EnglishDictationTool
         private StudyTask lastAutoSpokenTask;
         private int exampleRevealStage;
         private bool isPaused;
+        private AnswerFeedback feedback;
+        private SessionSummaryView summaryView;
+        private StudyList OpenedList { get { return store.Lists.FirstOrDefault(x => x.id == openedListId); } }
         internal string VisibleText { get { return display.ContentText; } }
         internal void RevealExampleForPreview()
         {
@@ -143,6 +146,7 @@ namespace EnglishDictationTool
             pronouncer = new WordPronouncer(pronunciationSettings);
             openedListId = study.Active == null ? null : study.Active.id;
             StudyList restored = study.Active;
+            feedback = restored == null ? null : restored.feedback;
             if (restored != null)
             {
                 previewReviewIndex = restored.pausedPreviewReviewIndex;
@@ -170,7 +174,7 @@ namespace EnglishDictationTool
 
             TableLayoutPanel layout = new TableLayoutPanel { Dock = DockStyle.Fill,
                 Padding = new Padding(20), ColumnCount = 1, RowCount = 5 };
-            layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 76));
+            layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 92));
             layout.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
             layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 64));
             layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 64));
@@ -181,11 +185,11 @@ namespace EnglishDictationTool
             TableLayoutPanel headingLayout = new TableLayoutPanel { Dock = DockStyle.Fill,
                 ColumnCount = 2, RowCount = 1, BackColor = Color.Transparent };
             headingLayout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-            headingLayout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 230));
+            headingLayout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 280));
             heading = new Label { Dock = DockStyle.Fill, TextAlign = ContentAlignment.MiddleLeft,
-                Font = new Font("Microsoft YaHei UI", 13, FontStyle.Bold) };
+                Font = new Font("Segoe UI", 13, FontStyle.Bold) };
             timerLabel = new Label { Dock = DockStyle.Fill, TextAlign = ContentAlignment.MiddleRight,
-                Font = new Font("Microsoft YaHei UI", 10, FontStyle.Regular), ForeColor = Theme.MutedText };
+                Font = new Font("Segoe UI", 14, FontStyle.Bold), ForeColor = Theme.Text };
             headingLayout.Controls.Add(heading, 0, 0);
             headingLayout.Controls.Add(timerLabel, 1, 0);
             headingCard.Controls.Add(headingLayout);
@@ -222,8 +226,11 @@ namespace EnglishDictationTool
                 else Submit();
             };
             layout.Controls.Add(answer, 0, 2);
-            FlowLayoutPanel actions = new FlowLayoutPanel { Dock = DockStyle.Fill, WrapContents = false,
-                FlowDirection = FlowDirection.LeftToRight, Padding = new Padding(0, 7, 0, 0) };
+            TableLayoutPanel actions = new TableLayoutPanel { Dock = DockStyle.Fill,
+                ColumnCount = 7, RowCount = 1, Padding = new Padding(0, 7, 0, 0),
+                BackColor = Theme.Background };
+            for (int column = 0; column < 7; column++)
+                actions.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 14.2857f));
             previous = ActionButton("上一页", delegate { Previous(); });
             advance = ActionButton("下一步", delegate { AdvanceOrExample(); });
             master = ActionButton("斩当前词", delegate { Master(); });
@@ -234,18 +241,21 @@ namespace EnglishDictationTool
             });
             replay = ActionButton("重播单词", delegate { ReplayWord(); });
             pause = ActionButton("暂停", delegate { TogglePause(); });
-            actions.Controls.Add(previous);
-            actions.Controls.Add(advance);
-            actions.Controls.Add(master);
-            actions.Controls.Add(undo);
-            actions.Controls.Add(backup);
-            actions.Controls.Add(replay);
-            actions.Controls.Add(pause);
+            actions.Controls.Add(previous, 0, 0);
+            actions.Controls.Add(advance, 1, 0);
+            actions.Controls.Add(master, 2, 0);
+            actions.Controls.Add(undo, 3, 0);
+            actions.Controls.Add(backup, 4, 0);
+            actions.Controls.Add(replay, 5, 0);
+            actions.Controls.Add(pause, 6, 0);
             layout.Controls.Add(actions, 0, 3);
             progress = new ModernProgressBar { Dock = DockStyle.Fill,
                 Margin = new Padding(0, 6, 0, 0) };
             layout.Controls.Add(progress, 0, 4);
             Theme.Apply(this);
+            timerLabel.Font = new Font("Segoe UI", 14, FontStyle.Bold);
+            layout.RowStyles[0].Height = Math.Max(92,
+                TextRenderer.MeasureText("本模块用时\r\n00:00:00.000", timerLabel.Font).Height + 44);
             display.SetAppearance(appearance, study.Active == null ? "new" : study.Active.kind);
             TextAppearance inputStyle = appearance.Settings.text["normal"];
             answer.Font = AppearanceStore.CreateFont(inputStyle);
@@ -257,7 +267,12 @@ namespace EnglishDictationTool
             {
                 bool wasActive = store.Active != null;
                 store.SettleCrossDay(DateTime.Now);
-                if (wasActive && store.Active == null) ShowStep();
+                if (wasActive && store.Active == null)
+                {
+                    feedback = null;
+                    if (OpenedList != null) { OpenedList.feedback = null; store.Save(); }
+                    ShowStep();
+                }
             };
             rolloverTimer.Start();
             ShowStep();
@@ -314,20 +329,34 @@ namespace EnglishDictationTool
 
         private static Button ActionButton(string text, EventHandler action)
         {
-            Button button = new ModernButton { Text = text, Width = 125, Height = 44,
-                Margin = new Padding(0, 0, 7, 0) };
+            Button button = new ModernButton { Text = text, Dock = DockStyle.Fill, Height = 46,
+                Margin = new Padding(0, 0, 8, 0) };
             button.Click += action;
             return button;
         }
 
         protected override bool ProcessCmdKey(ref Message msg, Keys keyData)
         {
+            if (summaryView != null)
+            {
+                if (keyData == Keys.Escape) Close();
+                return true;
+            }
             if (keyData == (Keys)store.Settings.pauseKey)
             {
                 TogglePause();
                 return true;
             }
             if (isPaused) return true;
+            if (feedback != null)
+            {
+                if (keyData == Keys.Enter) { ContinueFeedback(); return true; }
+                if (keyData == (Keys)pronunciationSettings.replayKey) { ReplayWord(); return true; }
+                if (keyData == (Keys)store.Settings.undoKey) { Undo(); return true; }
+                return true;
+            }
+            if (store.Active == null && OpenedList != null && keyData == Keys.Enter)
+            { ShowSummary(); return true; }
             if (IsExampleQuizActive() && keyData == Keys.Enter
                 && ExampleRevealFlow.HasTypedAnswer(answer.Text))
             {
@@ -352,9 +381,7 @@ namespace EnglishDictationTool
                 if (manualBackup != null && manualBackup()) Append("手动备份已完成。", Theme.Correct);
                 return true;
             }
-            if (keyData == (Keys)pronunciationSettings.replayKey && store.Active != null
-                && (store.Active.phase == "preview" || IsDictationQuizActive())
-                && pronunciationSettings.enabled)
+            if (keyData == (Keys)pronunciationSettings.replayKey && replay.Enabled)
             { ReplayWord(); return true; }
             if (store.Active != null && store.Active.phase == "preview"
                 && keyData == (Keys)store.Settings.previewKey)
@@ -370,14 +397,15 @@ namespace EnglishDictationTool
 
         private void BeginPauseOverlay(bool persist)
         {
-            if (store.Active == null || store.Active.id != openedListId) return;
+            if (OpenedList == null || summaryView != null) return;
             if (persist)
                 store.SaveSessionState(openedListId, answer.Text, exampleRevealStage,
                     previewReviewIndex, quizReviewIndex, true);
             learningTimer.StopAndCommit();
             isPaused = true;
             pauseOverlay.Visible = false;
-            pauseOverlay.Prepare(this, appearance, store.Active.kind);
+            pronouncer.Stop();
+            pauseOverlay.Prepare(this, appearance, OpenedList.kind);
             pauseOverlay.Visible = true;
             pauseOverlay.BringToFront();
             pause.Text = "继续";
@@ -398,6 +426,8 @@ namespace EnglishDictationTool
 
         private void ShowStep()
         {
+            if (summaryView != null) return;
+            if (feedback != null) { ShowFeedback(); return; }
             StudyList list = store.Active;
             StudyList opened = list ?? store.Lists.FirstOrDefault(x => x.id == openedListId);
             UpdateProgress(opened);
@@ -415,9 +445,9 @@ namespace EnglishDictationTool
                 heading.Text = settled ? "已跨日结算" : "本轮完成";
                 display.ClearContent();
                 Append(settled ? "本轮未完成的词已回到新学词池顶端。关闭窗口后可从新学入口优先抽取。"
-                    : "本轮已完成。需要时可关闭窗口，继续选择其他学习部分。",
+                    : "本轮已完成。按 Enter 查看本次结算。",
                     settled ? Theme.Text : Theme.Correct);
-                answer.Enabled = false; advance.Enabled = false; master.Enabled = false;
+                answer.Enabled = false; advance.Enabled = true; advance.Text = "查看结算"; master.Enabled = false;
                 previous.Enabled = opened != null && opened.history != null && opened.history.Count > 0;
                 undo.Enabled = store.UndoCount > 0;
                 shown = null; shownMode = null;
@@ -434,11 +464,10 @@ namespace EnglishDictationTool
                     pronouncer.Stop();
                     StudyItem earlier = list.items[previewReviewIndex];
                     shown = earlier.word; shownMode = "preview-history";
-                    heading.Text = kind + " · 已看单词 " + (previewReviewIndex + 1) + "/" + list.items.Count;
+                    heading.Text = kind + "  已看单词 " + (previewReviewIndex + 1) + "/" + list.items.Count;
                     display.ClearContent();
                     display.Add(GameEngine.CleanEnglish(earlier.word), "word");
-                    display.Add("例句：\n" + (string.IsNullOrWhiteSpace(earlier.word.examples)
-                        ? "该单词暂时没有例句" : Regex.Replace(earlier.word.examples, @"\[\[(.*?)\]\]", "$1")), "example");
+                    display.AddExample(earlier.word);
                     display.Add("释义：\n" + PartOfSpeech.DisplayChinese(earlier.word), "meaning");
                     answer.Clear(); answer.Enabled = false;
                     previous.Enabled = previewReviewIndex > 0;
@@ -456,13 +485,12 @@ namespace EnglishDictationTool
                     return;
                 }
                 shown = item.word; shownMode = "preview";
-                heading.Text = kind + " · " + list.id + " · " + (list.previewCursor + 1) + "/" + list.items.Count;
+                heading.Text = kind + "  " + list.id + "  " + (list.previewCursor + 1) + "/" + list.items.Count;
                 display.ClearContent();
                 display.Add(GameEngine.CleanEnglish(item.word), "word");
                 if (list.previewStage >= 1)
                 {
-                    display.Add("例句：\n" + (string.IsNullOrWhiteSpace(item.word.examples)
-                        ? "该单词暂时没有例句" : Regex.Replace(item.word.examples, @"\[\[(.*?)\]\]", "$1")), "example");
+                    display.AddExample(item.word);
                 }
                 if (list.previewStage >= 2)
                     display.Add("释义：\n" + PartOfSpeech.DisplayChinese(item.word), "meaning");
@@ -525,9 +553,10 @@ namespace EnglishDictationTool
                 exampleRevealStage = 0;
             }
             shown = task.word; shownMode = task.mode;
-            heading.Text = kind + " · " + list.id + " · " +
+            replay.Enabled = pronunciationSettings.enabled;
+            heading.Text = kind + "  " + list.id + "  " +
                 Math.Min(list.taskCursor + 1, list.tasks.Count) + "/" + list.tasks.Count
-                + (task.replay ? " · 错题复现" : "");
+                + (task.replay ? "  错题复现" : "");
             display.ClearContent();
             if (task.mode == "example")
             {
@@ -604,8 +633,7 @@ namespace EnglishDictationTool
 
         private void ReplayWord()
         {
-            if (store.Active == null || (store.Active.phase != "preview" && !IsDictationQuizActive())
-                || !pronunciationSettings.enabled || shown == null) return;
+            if (isPaused || !replay.Enabled || !pronunciationSettings.enabled || shown == null) return;
             SpeakShownWord();
         }
 
@@ -644,6 +672,8 @@ namespace EnglishDictationTool
 
         private void AdvanceOrExample()
         {
+            if (feedback != null) { ContinueFeedback(); return; }
+            if (store.Active == null) { ShowSummary(); return; }
             if (IsExampleQuizActive()) AdvanceExampleOrSubmit();
             else if (IsDictationQuizActive()) RevealDictationMeaning();
             else Advance();
@@ -666,14 +696,14 @@ namespace EnglishDictationTool
 
         private bool IsExampleQuizActive()
         {
-            return previewReviewIndex < 0 && quizReviewIndex < 0 && store.Active != null
+            return feedback == null && previewReviewIndex < 0 && quizReviewIndex < 0 && store.Active != null
                 && store.Active.phase == "quiz" && store.CurrentTask() != null
                 && store.CurrentTask().mode == "example";
         }
 
         private bool IsDictationQuizActive()
         {
-            return previewReviewIndex < 0 && quizReviewIndex < 0 && store.Active != null
+            return feedback == null && previewReviewIndex < 0 && quizReviewIndex < 0 && store.Active != null
                 && store.Active.phase == "quiz" && store.CurrentTask() != null
                 && store.CurrentTask().mode == "dictation";
         }
@@ -750,9 +780,10 @@ namespace EnglishDictationTool
         {
             pronouncer.Stop(); replay.Enabled = false;
             StudyTask task = list.history[index];
-            shown = null; shownMode = "quiz-history";
-            heading.Text = "答题回看 · " + (index + 1) + "/" + list.history.Count
-                + (task.replay ? " · 错题复现" : "");
+            shown = task.word; shownMode = "quiz-history";
+            replay.Enabled = pronunciationSettings.enabled;
+            heading.Text = "答题回看  " + (index + 1) + "/" + list.history.Count
+                + (task.replay ? "  错题复现" : "");
             display.ClearContent();
             if (task.mode == "example")
             {
@@ -787,6 +818,7 @@ namespace EnglishDictationTool
 
         private void Submit()
         {
+            if (feedback != null || summaryView != null || isPaused) return;
             if (previewReviewIndex >= 0 || quizReviewIndex >= 0
                 || shown == null || shownMode == "preview") return;
             if (IsExampleQuizActive() && !ExampleRevealFlow.ReadyToSubmit(exampleRevealStage,
@@ -798,22 +830,21 @@ namespace EnglishDictationTool
             try
             {
                 AnswerOutcome result = store.Submit(entered, DateTime.Now);
-                ShowStep();
                 if (result.Correct)
-                    display.Add(appearance.Prompt("correct", answeredWord, entered,
-                        result.CorrectAnswer), "correct");
-                else
                 {
-                    display.Add(appearance.Prompt("error", answeredWord, entered,
-                        result.CorrectAnswer), "error");
-                    string difference = SpellingDifference.Report(entered, accepted);
-                    if (!string.IsNullOrWhiteSpace(difference)) display.Add(difference, "error");
+                    feedback = null; OpenedList.feedback = null; store.Save();
+                    pronouncer.Stop();
+                    if (store.Active == null) learningTimer.StopAndCommit();
+                    ShowStep();
+                    return;
                 }
-                if (answeredTask != null && answeredTask.mode == "dictation")
-                {
-                    display.Add("正确英文：" + result.CorrectAnswer, "word");
-                    display.Add("中文释义：" + PartOfSpeech.DisplayChinese(answeredWord), "meaning");
-                }
+                feedback = new AnswerFeedback { word = answeredWord, input = entered, answer = result.CorrectAnswer,
+                    mode = answeredTask.mode, correct = result.Correct, difference = SpellingDifference.Report(entered, accepted) };
+                OpenedList.feedback = feedback;
+                store.Save();
+                if (store.Active == null) learningTimer.StopAndCommit();
+                ShowFeedback();
+                if (!result.Correct) SpeakShownWord();
                 if (result.MovedToErrorProne) Append("已达到门槛，移入易错本。", Theme.Text);
             }
             catch (Exception error)
@@ -825,6 +856,7 @@ namespace EnglishDictationTool
 
         private void Master()
         {
+            if (feedback != null || isPaused || summaryView != null) return;
             if (previewReviewIndex >= 0 || quizReviewIndex >= 0) return;
             pronouncer.Stop();
             WordEntry mastered = store.MasterCurrent(DateTime.Now);
@@ -839,8 +871,46 @@ namespace EnglishDictationTool
             pronouncer.Stop();
             WordEntry word = store.Undo();
             if (word == null) return;
+            feedback = null;
+            if (OpenedList != null) { OpenedList.feedback = null; store.Save(); }
             ShowStep();
             Append("已撤销：" + GameEngine.CleanEnglish(word) + "；当前题不变，下题重做该词。", Theme.Text);
+        }
+
+        private void ShowFeedback()
+        {
+            shown = feedback.word; shownMode = "feedback";
+            heading.Text = feedback.correct ? "回答正确" : "回答错误";
+            feedback.Render(display, appearance);
+            answer.Clear(); answer.Enabled = false;
+            previous.Enabled = false; master.Enabled = false;
+            replay.Enabled = pronunciationSettings.enabled;
+            undo.Enabled = store.UndoCount > 0;
+            advance.Enabled = true;
+            advance.Text = store.Active == null ? "查看结算" : "下一题";
+            display.Add(store.Active == null ? "本轮已完成，按 Enter 查看结算。" : "按 Enter 继续下一题。", "normal");
+            UpdateProgress(OpenedList);
+            advance.Focus();
+        }
+
+        private void ContinueFeedback()
+        {
+            pronouncer.Stop();
+            feedback = null;
+            if (OpenedList != null) { OpenedList.feedback = null; store.Save(); }
+            if (store.Active == null) ShowSummary(); else ShowStep();
+        }
+
+        private void ShowSummary()
+        {
+            if (OpenedList == null || store.Active != null || summaryView != null) return;
+            learningTimer.StopAndCommit(); pronouncer.Stop();
+            summaryView = new SessionSummaryView(SessionSummary.FromStudy(OpenedList),
+                store.Settings.timerEnabled, store.Settings.timerPrecision);
+            summaryView.SetAppearance(appearance, OpenedList.kind);
+            foreach (Control control in Controls) control.Visible = false;
+            Controls.Add(summaryView); summaryView.BringToFront(); summaryView.Focus();
+            summaryView.Visible = true;
         }
     }
 }

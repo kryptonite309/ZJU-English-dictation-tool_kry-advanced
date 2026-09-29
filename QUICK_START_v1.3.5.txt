@@ -1,0 +1,15 @@
+大英默写器 KRY 增强版 v1.3.5
+
+首次使用
+
+1. 将压缩包完整解压到普通文件夹，不要直接在压缩包中运行。
+2. 保持 main.exe、data、appearance_images 和 appearance.json 位于解压后的原始位置。
+3. 双击 main.exe 启动。第一次启动会显示新手引导。
+
+本完整版已经包含 book2、book3 与 KRY 默认动态皮肤。
+动态背景默认静音循环，只有最上层窗口播放。可以在“设置 > 外观设置”中更换、关闭或恢复默认。
+
+学习进度、错题本、个人设置和备份会保存在程序文件夹中。移动或删除程序前，请先关闭程序并备份整个文件夹。
+
+项目地址
+https://github.com/kryptonite309/ZJU-English-dictation-tool_kry-advanced
