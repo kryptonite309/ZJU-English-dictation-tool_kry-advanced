@@ -14,6 +14,27 @@ using System.Windows.Forms;
 
 namespace EnglishDictationTool
 {
+    internal static class ReleaseAssetNames
+    {
+        public const string Prefix = "ZJU-English-dictation-tool_kry-advanced-";
+        public const string ChecksumFileName = "SHA256SUMS.txt";
+
+        public static string FullPackageName(Version version)
+        { return Prefix + "v" + version + "-full.zip"; }
+
+        public static string UpgradePackageName(Version version)
+        { return Prefix + "v" + version + "-upgrade.zip"; }
+
+        public static bool IsUpgradePackage(string fileName)
+        {
+            string name = Path.GetFileName(fileName ?? string.Empty);
+            if (!name.EndsWith(".zip", StringComparison.OrdinalIgnoreCase)) return false;
+            if (name.EndsWith(".zip.zip", StringComparison.OrdinalIgnoreCase)) return false;
+            return name.IndexOf("upgrade", StringComparison.OrdinalIgnoreCase) >= 0
+                || name.IndexOf("升级包", StringComparison.Ordinal) >= 0;
+        }
+    }
+
     internal sealed class ReleaseUpdate
     {
         public string version { get; set; }
@@ -26,7 +47,7 @@ namespace EnglishDictationTool
 
     internal sealed class UpdateService
     {
-        public const string CurrentVersion = "1.3.5";
+        public const string CurrentVersion = "1.3.6";
         private const string ReleasesApi = "https://api.github.com/repos/kryptonite309/ZJU-English-dictation-tool_kry-advanced/releases/latest";
         private readonly string root;
         private readonly BackupService backups;
@@ -85,15 +106,20 @@ namespace EnglishDictationTool
             if (latest <= current) return null;
             object[] assets = release.ContainsKey("assets") ? release["assets"] as object[] : null;
             if (assets == null) throw new InvalidDataException("新版本没有可下载文件。");
+            string expectedZipName = ReleaseAssetNames.UpgradePackageName(latest);
             Dictionary<string, object> zip = assets.Cast<Dictionary<string, object>>()
-                .FirstOrDefault(x => Convert.ToString(x["name"]).EndsWith(".zip",
-                    StringComparison.OrdinalIgnoreCase)
-                    && Convert.ToString(x["name"]).Contains("升级包"));
+                .FirstOrDefault(x => string.Equals(Convert.ToString(x["name"]),
+                    expectedZipName, StringComparison.OrdinalIgnoreCase));
+            if (zip == null)
+                zip = assets.Cast<Dictionary<string, object>>()
+                    .FirstOrDefault(x => ReleaseAssetNames.IsUpgradePackage(
+                        Convert.ToString(x["name"])));
             Dictionary<string, object> sums = assets.Cast<Dictionary<string, object>>()
                 .FirstOrDefault(x => string.Equals(Convert.ToString(x["name"]),
-                    "SHA256SUMS.txt", StringComparison.OrdinalIgnoreCase));
+                    ReleaseAssetNames.ChecksumFileName, StringComparison.OrdinalIgnoreCase));
             if (zip == null || sums == null)
-                throw new InvalidDataException("新版本必须同时提供名称含“升级包”的 ZIP 和 SHA256SUMS.txt。");
+                throw new InvalidDataException("新版本必须同时提供按统一规则命名的 upgrade ZIP 和 SHA256SUMS.txt。"
+                    + "\n应为：" + expectedZipName);
             return new ReleaseUpdate
             {
                 version = latest.ToString(), tag = tag,
@@ -127,7 +153,7 @@ namespace EnglishDictationTool
                         + Guid.NewGuid().ToString("N"));
                     Directory.CreateDirectory(temporary);
                     string zipPath = Path.Combine(temporary, update.zipName);
-                    string sumsPath = Path.Combine(temporary, "SHA256SUMS.txt");
+                    string sumsPath = Path.Combine(temporary, ReleaseAssetNames.ChecksumFileName);
                     Download(update.zipUrl, zipPath);
                     Download(update.sumsUrl, sumsPath);
                     string expected = ExpectedHash(File.ReadAllText(sumsPath, Encoding.UTF8), update.zipName);
@@ -236,17 +262,23 @@ namespace EnglishDictationTool
             }
         }
 
-        private static string ExpectedHash(string contents, string filename)
+        internal static string ExpectedHash(string contents, string filename)
         {
             foreach (string line in (contents ?? string.Empty).Split(new[] { '\r', '\n' },
                 StringSplitOptions.RemoveEmptyEntries))
             {
                 string trimmed = line.Trim();
-                if (!trimmed.EndsWith(filename, StringComparison.OrdinalIgnoreCase)) continue;
-                string hash = trimmed.Split(new[] { ' ', '\t' }, StringSplitOptions.RemoveEmptyEntries)[0];
-                if (hash.Length == 64 && hash.All(Uri.IsHexDigit)) return hash.ToUpperInvariant();
+                if (trimmed.Length <= 64) continue;
+                string hash = trimmed.Substring(0, 64);
+                if (!hash.All(Uri.IsHexDigit) || !char.IsWhiteSpace(trimmed[64])) continue;
+                string listedName = trimmed.Substring(65).Trim();
+                if (listedName.StartsWith("*", StringComparison.Ordinal))
+                    listedName = listedName.Substring(1);
+                if (string.Equals(listedName, filename, StringComparison.OrdinalIgnoreCase))
+                    return hash.ToUpperInvariant();
             }
-            throw new InvalidDataException("SHA256SUMS.txt 中没有升级包的有效校验值。");
+            throw new InvalidDataException("SHA256SUMS.txt 中没有与升级包文件名完全匹配的有效校验值。"
+                + "\n升级包：" + filename);
         }
 
         private static string ExtractExecutable(string zipPath, string folder)

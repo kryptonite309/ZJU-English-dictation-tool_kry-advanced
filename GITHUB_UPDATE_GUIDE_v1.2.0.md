@@ -1,5 +1,7 @@
 # v1.2.0 GitHub 更新操作
 
+> 本文是 v1.2.0 的历史发布说明。v1.3.6 起发布文件已统一使用纯英文名称，请以 `GITHUB_PUBLISH_v1.3.6.md` 为准。
+
 ## 一、更新仓库源码
 
 1. 打开项目仓库：<https://github.com/kryptonite309/ZJU-English-dictation-tool_kry-advanced>

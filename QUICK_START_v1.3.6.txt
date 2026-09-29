@@ -1,0 +1,14 @@
+大英默写器 KRY 增强版 v1.3.6
+
+首次安装
+1. 解压 ZJU-English-dictation-tool_kry-advanced-v1.3.6-full.zip。
+2. 保持 main.exe、data 和 appearance_images 位于同一程序目录。
+3. 双击 main.exe 启动。
+
+旧版升级
+1. 完全关闭旧版程序。
+2. 解压 ZJU-English-dictation-tool_kry-advanced-v1.3.6-upgrade.zip。
+3. 用新版 main.exe 覆盖旧程序目录中的同名文件。
+4. 可将 appearance_images 合并到原目录，已有同名文件可以保留。
+
+v1.3.5 及更早版本需要手动完成本次升级。从 v1.3.6 开始，后续 Release 可以使用统一的英文资产名自动更新。

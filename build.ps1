@@ -80,7 +80,8 @@ New-Item -ItemType Directory -Force -Path $outputDirectoryPath | Out-Null
     "$sourceDirectory\SessionFeedback.cs" `
     "$sourceDirectory\V131Tests.cs" `
     "$sourceDirectory\V134Tests.cs" `
-    "$sourceDirectory\V135Tests.cs"
+    "$sourceDirectory\V135Tests.cs" `
+    "$sourceDirectory\V136Tests.cs"
 
 if ($LASTEXITCODE -ne 0) {
     throw "构建失败，退出代码: $LASTEXITCODE"

@@ -1,5 +1,14 @@
 # 更新日志
 
+## v1.3.6
+
+- GitHub Release 的完整包、升级包与校验文件统一使用 ASCII 文件名，避免中文名称在上传后被替换。
+- 完整包固定命名为 `ZJU-English-dictation-tool_kry-advanced-v版本号-full.zip`。
+- 升级包固定命名为 `ZJU-English-dictation-tool_kry-advanced-v版本号-upgrade.zip`。
+- 更新器优先精确匹配当前 Release 的标准升级包名称，同时兼容名称中含 `upgrade` 或旧中文“升级包”的 ZIP。
+- SHA256 校验现在要求 `SHA256SUMS.txt` 中的文件名与实际下载资产完全一致，避免资产改名后误用旧校验记录。
+- 更新器会拒绝重复扩展名 `.zip.zip`，并在资产缺失时显示预期的标准文件名。
+
 ## v1.3.5
 
 - 发布完整版内置当前 KRY 默认动态皮肤，新安装与恢复默认会使用这套外观；升级不会覆盖已有外观配置。
