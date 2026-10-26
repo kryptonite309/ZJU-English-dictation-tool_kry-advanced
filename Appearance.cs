@@ -61,11 +61,11 @@ namespace EnglishDictationTool
             foreach (string key in new[] { "free", "new", "list_review", "problem_review", "calendar" })
                 settings.backgrounds[key] = new BackgroundAppearance
                 { color = Color.FromArgb(-15987700).ToArgb(),
-                    image = Path.Combine("appearance_images", "default-study.mp4"),
+                    image = "",
                     fit = "cover", shade = 35, panelTransparency = 0 };
             settings.backgrounds["main"] = new BackgroundAppearance
                 { color = Color.FromArgb(-16052976).ToArgb(),
-                    image = Path.Combine("appearance_images", "default.mp4"),
+                    image = "",
                     fit = "cover", shade = 15, panelTransparency = 85 };
             settings.backgrounds["pause"] = new BackgroundAppearance
                 { color = Color.FromArgb(18, 22, 30).ToArgb(), image = "", fit = "cover", shade = 42 };
@@ -102,6 +102,26 @@ namespace EnglishDictationTool
                 ? new JavaScriptSerializer().Deserialize<AppearanceSettings>(File.ReadAllText(path, Encoding.UTF8))
                 : AppearanceSettings.Defaults();
             Normalize(Settings);
+            ClearBundledDefaultBackgrounds();
+        }
+
+        private void ClearBundledDefaultBackgrounds()
+        {
+            string main = Path.Combine(root, "appearance_images", "default.mp4");
+            string study = Path.Combine(root, "appearance_images", "default-study.mp4");
+            foreach (BackgroundAppearance background in Settings.backgrounds.Values)
+            {
+                if (background == null || string.IsNullOrWhiteSpace(background.image)) continue;
+                string image;
+                try { image = Path.GetFullPath(Path.IsPathRooted(background.image)
+                    ? background.image : Path.Combine(root, background.image)); }
+                catch (ArgumentException) { continue; }
+                catch (NotSupportedException) { continue; }
+                catch (PathTooLongException) { continue; }
+                if (string.Equals(image, main, StringComparison.OrdinalIgnoreCase)
+                    || string.Equals(image, study, StringComparison.OrdinalIgnoreCase))
+                    background.image = "";
+            }
         }
 
         public AppearanceSettings CopySettings()

@@ -1380,7 +1380,7 @@ namespace EnglishDictationTool
         public FreePracticeForm()
         {
             ModernUI.ApplyAppIcon(this);
-            Text = "自由练习  KRY 增强版 v1.4.1";
+            Text = "自由练习  KRY 增强版 v1.4.2";
             StartPosition = FormStartPosition.CenterScreen;
             ClientSize = ModernUI.FitWindow(1320, 820);
             MinimumSize = new Size(920, 620);
@@ -1553,7 +1553,7 @@ namespace EnglishDictationTool
             freePronouncer = new WordPronouncer(freePronunciationSettings);
             keybindings = LoadKeybindings();
 
-            Text = "大英默写器  KRY 增强版 v1.4.1 更新器修复版";
+            Text = "大英默写器  KRY 增强版 v1.4.2 背景清空测试版";
             StartPosition = FormStartPosition.CenterScreen;
             ClientSize = ModernUI.FitWindow(1540, 920);
             MinimumSize = new Size(1100, 720);
