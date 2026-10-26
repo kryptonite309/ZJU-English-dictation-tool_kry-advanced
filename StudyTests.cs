@@ -331,13 +331,18 @@ namespace EnglishDictationTool
             Require(first.history.Count == 2, "进入复现轮不会丢失此前题目历史");
             Require(notebooks.GetNotebook(first.items[1].word) == Notebooks.Wrong, "答错进入错题本");
             store.SettleCrossDay(firstDay.AddDays(1));
-            Require(first.status == "settled" && first.items[1].released && !first.items[0].released,
-                "跨日未复现返池，已答对留原列表");
-            Require(store.AvailableCounts()["book1"] == 3, "返池恢复未提取余量");
+            Require(first.status == "active" && !first.items[1].released
+                && store.IsCrossDay(first, firstDay.AddDays(1)),
+                "普通学习列表跨日保持冻结，等待用户选择");
+            Require(store.AvailableCounts()["book1"] == 2, "未选择结束前不改变新词池");
+            StudyEndResult endedFirst = store.EndActive("new", firstDay.AddDays(1));
+            Require(endedFirst.kept == 1 && endedFirst.released == 1
+                && store.AvailableCounts()["book1"] == 3,
+                "手动结束后未完成新词回到普通未抽取池");
             StudyList second = store.ExtractNew(new Dictionary<string, int> { { "book1", 2 } },
                 firstDay.AddDays(1).AddMinutes(1));
-            Require(second.items[0].word.english == "bravo" && second.items[0].carriedOver,
-                "跨日词优先于单元顺序");
+            Require(second.items[0].word.english == "bravo" && !second.items[0].carriedOver,
+                "结束列表后的未完成新词按普通顺序重新抽取");
             Require(second.items[1].word.english == "charlie", "余下继续按单元抽取");
             for (int i = 0; i < 6; i++) store.AdvancePreview();
             Require(store.CurrentTask().word.english == "bravo", "继续后的首题");
@@ -440,8 +445,8 @@ namespace EnglishDictationTool
             Require(review.sourceListIds.Count == 2 && review.sourceListIds[0] == first.id
                 && review.sourceListIds[1] == second.id, "按时间正序呈现过去列表");
             Require(review.items.Count(x => x.word.english == "bravo") == 1,
-                "跨日返池词不从旧列表复习");
-            store.SettleCrossDay(firstDay.AddDays(3));
+                "结束的新学列表不重复提供已回池词");
+            store.EndActive("list_review", firstDay.AddDays(3));
             store.Settings.problemExample = true;
             store.Settings.problemSpelling = true;
             store.SaveSettings();
@@ -487,7 +492,7 @@ namespace EnglishDictationTool
                 && latestFour.sourceListIds[1] == newer[0].id
                 && latestFour.sourceListIds[3] == newer[2].id,
                 "b 按最近四个列表筛选，再按时间正序呈现");
-            store.SettleCrossDay(firstDay.AddDays(11));
+            store.EndActive("list_review", firstDay.AddDays(11));
             string masteryRoot = Path.Combine(root, "mastery_test");
             string masteryBook = Path.Combine(masteryRoot, "data", "book1");
             Directory.CreateDirectory(masteryBook);
@@ -519,11 +524,12 @@ namespace EnglishDictationTool
             rolloverStore.Submit("wrong", rolloverDay.AddMinutes(1));
             rolloverStore.SettleCrossDay(rolloverDay.AddDays(1));
             rolloverStore.Undo();
-            Require(rolloverStore.Active == null && rolloverNotebooks.Count(Notebooks.Wrong) == 0,
-                "跨日撤销不会重新打开昨天列表");
+            Require(rolloverStore.Active != null && rolloverNotebooks.Count(Notebooks.Wrong) == 0,
+                "跨日冻结列表仍可撤销，且不会自动结算");
+            rolloverStore.EndActive("new", rolloverDay.AddDays(1));
             Require(rolloverStore.ExtractNew(new Dictionary<string, int> { { "book1", 1 } },
                 rolloverDay.AddDays(1).AddMinutes(1)).items[0].word.english == "bravo",
-                "跨日撤销后单词仍在优先词池");
+                "结束跨日列表后未完成单词回到普通未抽取池");
 
             string independentRoot = Path.Combine(root, "independent_sessions_test");
             string independentBook = Path.Combine(independentRoot, "data", "book1");
@@ -575,8 +581,8 @@ namespace EnglishDictationTool
                 "手动结束新学仅保留完成词且不影响复习模块");
             StudyList priorityList = independentStore.ExtractNew(
                 new Dictionary<string, int> { { "book1", 1 } }, independentDay.AddDays(1).AddMinutes(4));
-            Require(priorityList.items[0].word.english == "delta" && priorityList.items[0].carriedOver,
-                "手动结束释放词回到新词池顶端");
+            Require(priorityList.items[0].word.english == "delta" && !priorityList.items[0].carriedOver,
+                "手动结束释放词回到普通未抽取池且不提高优先级");
             independentStore.Settings.listExample = false;
             independentStore.Settings.listSpelling = true;
             independentStore.SaveSettings();
@@ -585,10 +591,13 @@ namespace EnglishDictationTool
             StudyEndResult endedReview = independentStore.EndActive("list_review",
                 independentDay.AddDays(1).AddMinutes(6));
             Require(endedReview.kept == 1 && endedReview.released == 1,
-                "手动结束历史复习只保留已完成词");
-            StudyList resumedReview = independentStore.StartListReview(independentDay.AddDays(1).AddMinutes(7));
-            Require(resumedReview.items.Count == 1 && resumedReview.items[0].word.english == "bravo",
-                "历史复习未完成词可在当天重新进入后续列表");
+                "手动结束历史复习统计已完成与未完成词");
+            StudyList resumedReview = independentStore.StartSelectedListReview(
+                new[] { unfinishedReview.id }, independentDay.AddDays(1).AddMinutes(7));
+            Require(resumedReview.items.Count == 2
+                && resumedReview.items[0].word.english == "alpha"
+                && resumedReview.items[1].word.english == "bravo",
+                "手动结束历史复习后可按完整原列表再次调用");
 
             string libraryRoot = Path.Combine(root, "library_import_test");
             Directory.CreateDirectory(Path.Combine(libraryRoot, "data", "book1"));
@@ -624,8 +633,8 @@ namespace EnglishDictationTool
 
             StudyStore reloaded = new StudyStore(root, loader, new NotebookStore(root));
             Require(reloaded.Lists.Count >= 3 && reloaded.Settings.fuzzyAnswers, "学习状态持久化");
-            Require(reloaded.Lists.First(x => x.id == first.id).history.Count == 2,
-                "回看记录持久化");
+            Require(reloaded.Lists.First(x => x.id == first.id).history.Count == 1,
+                "结束新学后保留已完成部分的回看记录并移除返池词记录");
             AppearanceStore appearance = new AppearanceStore(root);
             string sample = Path.Combine(root, "background_source.png");
             using (Bitmap bitmap = new Bitmap(80, 60))

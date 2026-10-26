@@ -1,0 +1,11 @@
+大英默写器 KRY 增强版 v1.4.0
+
+完整解压后运行 main.exe，保持 main.exe 和 data 文件夹处于同一层。
+初次启动会显示新手引导。主界面可用滚轮选择新学、历史列表复习、错题复习或自由练习。
+设置中可以修改题型、快捷键和学习范围，外观编辑器中可以修改字体、背景、透明度与答题提示。
+默认 Ctrl+L 收藏当前单词，默认 Esc 暂停，结算页的 Esc 关闭当前学习窗口。
+学习记录与收藏夹保存在程序所在目录。移动或升级前请关闭程序并备份整个目录，不要用别人的状态文件覆盖自己的记录。
+不要删除 data/preserve-archived-progress-v1.4.0.flag。
+
+项目地址 https://github.com/kryptonite309/ZJU-English-dictation-tool_kry-advanced
+问题反馈 https://github.com/kryptonite309/ZJU-English-dictation-tool_kry-advanced/issues

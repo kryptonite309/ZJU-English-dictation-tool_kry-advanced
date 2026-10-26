@@ -47,7 +47,7 @@ namespace EnglishDictationTool
 
     internal sealed class UpdateService
     {
-        public const string CurrentVersion = "1.3.6";
+        public const string CurrentVersion = "1.4.0";
         private const string ReleasesApi = "https://api.github.com/repos/kryptonite309/ZJU-English-dictation-tool_kry-advanced/releases/latest";
         private readonly string root;
         private readonly BackupService backups;

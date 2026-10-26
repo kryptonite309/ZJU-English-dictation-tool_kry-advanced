@@ -62,6 +62,8 @@ New-Item -ItemType Directory -Force -Path $outputDirectoryPath | Out-Null
     "$sourceDirectory\VideoBackground.cs" `
     "$sourceDirectory\NotebookStore.cs" `
     "$sourceDirectory\NotebookManagerForm.cs" `
+    "$sourceDirectory\FavoriteForms.cs" `
+    "$sourceDirectory\FavoriteFolderTests.cs" `
     "$sourceDirectory\NotebookTests.cs" `
     "$sourceDirectory\StudyStore.cs" `
     "$sourceDirectory\Appearance.cs" `
@@ -81,7 +83,9 @@ New-Item -ItemType Directory -Force -Path $outputDirectoryPath | Out-Null
     "$sourceDirectory\V131Tests.cs" `
     "$sourceDirectory\V134Tests.cs" `
     "$sourceDirectory\V135Tests.cs" `
-    "$sourceDirectory\V136Tests.cs"
+    "$sourceDirectory\V136Tests.cs" `
+    "$sourceDirectory\V137Tests.cs" `
+    "$sourceDirectory\V140Tests.cs"
 
 if ($LASTEXITCODE -ne 0) {
     throw "构建失败，退出代码: $LASTEXITCODE"

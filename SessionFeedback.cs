@@ -61,7 +61,9 @@ namespace EnglishDictationTool
             var answered = attempts.Where(x => x.sessionId == session.id).ToList();
             var first = answered.GroupBy(x => x.taskIndex)
                 .Select(g => g.OrderBy(x => x.answeredAt).First()).ToList();
-            return new SessionSummary { title = manual ? "本次练习已结束" : "本次学习完成", module = "自由练习",
+            return new SessionSummary { title = manual ? "本次练习已结束" : "本次学习完成",
+                module = session.kind == "problem_free" ? "错题自由模式"
+                    : session.kind == "favorites" ? "收藏夹练习" : "自由练习",
                 manualEnd = manual,
                 words = session.engine.deck.Select(DataLoader.WordKey).Distinct().Count(),
                 total = manual ? first.Count : session.engine.deck.Count,

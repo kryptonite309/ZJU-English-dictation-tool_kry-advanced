@@ -40,6 +40,20 @@ namespace EnglishDictationTool
         public int errorCount { get; set; }
         public DateTime lastAnsweredAt { get; set; }
         public DateTime lastEditedAt { get; set; }
+        public bool favorite { get; set; }
+        public List<string> favoriteFolderIds { get; set; }
+        public int problemDrawCount { get; set; }
+        public int problemLastDrawRound { get; set; }
+        public DateTime lastProblemAttemptAt { get; set; }
+        public DateTime lastProblemCompletedAt { get; set; }
+        public string lastProblemResult { get; set; }
+    }
+
+    internal sealed class FavoriteFolder
+    {
+        public string id { get; set; }
+        public string name { get; set; }
+        public override string ToString() { return name; }
     }
 
     internal sealed class NotebookState
@@ -48,8 +62,11 @@ namespace EnglishDictationTool
         public bool reviewFirstLetter { get; set; }
         public int reviewCorrectTarget { get; set; }
         public int masteryShortcut { get; set; }
+        public int problemFairRound { get; set; }
         public List<NotebookRecord> records { get; set; }
         public List<WordEntry> recent { get; set; }
+        public List<FavoriteFolder> favoriteFolders { get; set; }
+        public string defaultFavoriteFolderId { get; set; }
     }
 
     internal sealed class AnswerOutcome
@@ -78,7 +95,9 @@ namespace EnglishDictationTool
             migrationBackupPath = Path.Combine(projectRoot, "wrong_words.pre-migration.json");
             if (File.Exists(statePath)) Load();
             else MigrateLegacyWrongWords();
-            bool changed = ConsolidateDuplicateWords();
+            bool changed = NormalizeFavorites();
+            if (ConsolidateDuplicateWords()) changed = true;
+            if (state.problemFairRound < 1) { state.problemFairRound = 1; changed = true; }
             if (EnrichPartsOfSpeech()) changed = true;
             if (changed) Save();
         }
@@ -138,6 +157,198 @@ namespace EnglishDictationTool
             return state.records.Count(item => item.notebook == notebook);
         }
 
+        public List<WordEntry> GetProblemWords()
+        {
+            return state.records.Where(x => x.notebook == Notebooks.Wrong
+                    || x.notebook == Notebooks.ErrorProne)
+                .Select(x => x.word).ToList();
+        }
+
+        public bool IsFavorite(WordEntry word)
+        {
+            NotebookRecord record = FindRecord(word);
+            return record != null && record.favoriteFolderIds != null && record.favoriteFolderIds.Count > 0;
+        }
+
+        public IList<FavoriteFolder> FavoriteFolders { get { return state.favoriteFolders.AsReadOnly(); } }
+        public string DefaultFavoriteFolderId { get { return state.defaultFavoriteFolderId; } }
+
+        public FavoriteFolder GetFavoriteFolder(string id)
+        { return state.favoriteFolders.FirstOrDefault(x => x.id == id); }
+
+        public List<string> FavoriteFolderIds(WordEntry word)
+        {
+            NotebookRecord record = FindRecord(word);
+            return record == null || record.favoriteFolderIds == null ? new List<string>()
+                : new List<string>(record.favoriteFolderIds);
+        }
+
+        public string FavoriteFolderNames(WordEntry word)
+        {
+            List<string> ids = FavoriteFolderIds(word);
+            return string.Join("、", state.favoriteFolders.Where(x => ids.Contains(x.id)).Select(x => x.name));
+        }
+
+        public List<WordEntry> GetFavoriteWords(string folderId = null)
+        {
+            return state.records.Where(x => x.favoriteFolderIds != null && (string.IsNullOrEmpty(folderId)
+                ? x.favoriteFolderIds.Count > 0 : x.favoriteFolderIds.Contains(folderId)))
+                .Select(x => x.word).ToList();
+        }
+
+        public bool ToggleFavorite(WordEntry word)
+        {
+            if (word == null || DataLoader.WordKey(word).Length == 0) return false;
+            List<string> ids = FavoriteFolderIds(word);
+            bool added = !ids.Contains(DefaultFavoriteFolderId);
+            if (added) ids.Add(DefaultFavoriteFolderId); else ids.Remove(DefaultFavoriteFolderId);
+            SetFavoriteFolders(word, ids);
+            return added;
+        }
+
+        public void SetFavoriteFolders(WordEntry word, IEnumerable<string> folderIds)
+        {
+            if (word == null || DataLoader.WordKey(word).Length == 0) throw new ArgumentException("请选择一个单词。");
+            List<string> ids = (folderIds ?? Enumerable.Empty<string>()).Distinct().ToList();
+            if (ids.Any(x => GetFavoriteFolder(x) == null)) throw new ArgumentException("收藏夹已不存在，请重新选择。");
+            NotebookRecord record = FindRecord(word);
+            if (record == null)
+            {
+                record = new NotebookRecord { word = word, notebook = Notebooks.None };
+                state.records.Add(record);
+            }
+            else record.word = DataLoader.MergeWordEntry(new[] { record.word, word });
+            record.favoriteFolderIds = ids;
+            record.favorite = ids.Count > 0;
+            record.lastEditedAt = DateTime.Now;
+            Save();
+        }
+
+        public void SetFavoriteMembership(WordEntry word, string folderId, bool included)
+        {
+            List<string> ids = FavoriteFolderIds(word);
+            if (included && !ids.Contains(folderId)) ids.Add(folderId);
+            if (!included) ids.Remove(folderId);
+            SetFavoriteFolders(word, ids);
+        }
+
+        private string ValidateFavoriteName(string name, string exceptId = null)
+        {
+            name = (name ?? string.Empty).Trim();
+            if (name.Length == 0 || name.Length > 60) throw new ArgumentException("收藏夹名称须为 1 至 60 个字符。");
+            if (state.favoriteFolders.Any(x => x.id != exceptId
+                && string.Equals(x.name, name, StringComparison.OrdinalIgnoreCase)))
+                throw new ArgumentException("已存在同名收藏夹。");
+            return name;
+        }
+
+        public FavoriteFolder CreateFavoriteFolder(string name)
+        {
+            name = ValidateFavoriteName(name);
+            FavoriteFolder folder = new FavoriteFolder { id = Guid.NewGuid().ToString("N"), name = name };
+            state.favoriteFolders.Add(folder); Save(); return folder;
+        }
+
+        public void RenameFavoriteFolder(string id, string name)
+        {
+            FavoriteFolder folder = GetFavoriteFolder(id);
+            if (folder == null) throw new ArgumentException("收藏夹不存在。");
+            folder.name = ValidateFavoriteName(name, id); Save();
+        }
+
+        public void SetDefaultFavoriteFolder(string id)
+        {
+            if (GetFavoriteFolder(id) == null) throw new ArgumentException("收藏夹不存在。");
+            state.defaultFavoriteFolderId = id; Save();
+        }
+
+        public void DeleteFavoriteFolder(string id)
+        {
+            if (GetFavoriteFolder(id) == null) throw new ArgumentException("收藏夹不存在。");
+            if (state.favoriteFolders.Count <= 1) throw new InvalidOperationException("请至少保留一个收藏夹。");
+            state.favoriteFolders.RemoveAll(x => x.id == id);
+            foreach (NotebookRecord record in state.records)
+            {
+                if (record.favoriteFolderIds == null || !record.favoriteFolderIds.Remove(id)) continue;
+                record.favorite = record.favoriteFolderIds.Count > 0;
+                record.lastEditedAt = DateTime.Now;
+            }
+            if (state.defaultFavoriteFolderId == id) state.defaultFavoriteFolderId = state.favoriteFolders[0].id;
+            Save();
+        }
+
+        private bool NormalizeFavorites()
+        {
+            bool changed = false;
+            if (state.favoriteFolders == null || state.favoriteFolders.Count == 0)
+            {
+                state.favoriteFolders = new List<FavoriteFolder> { new FavoriteFolder { id = "default", name = "默认收藏夹" } };
+                changed = true;
+            }
+            if (GetFavoriteFolder(state.defaultFavoriteFolderId) == null)
+            { state.defaultFavoriteFolderId = state.favoriteFolders[0].id; changed = true; }
+            foreach (NotebookRecord record in state.records)
+            {
+                if (record.favoriteFolderIds == null)
+                {
+                    record.favoriteFolderIds = record.favorite ? new List<string> { state.defaultFavoriteFolderId }
+                        : new List<string>();
+                    changed = true;
+                }
+                List<string> valid = record.favoriteFolderIds.Where(id => GetFavoriteFolder(id) != null).Distinct().ToList();
+                if (!valid.SequenceEqual(record.favoriteFolderIds)) changed = true;
+                record.favoriteFolderIds = valid;
+                if (record.favorite != (valid.Count > 0)) changed = true;
+                record.favorite = valid.Count > 0;
+            }
+            return changed;
+        }
+
+        public List<WordEntry> SelectFairProblemWords(IEnumerable<WordEntry> eligible,
+            int count, DateTime now)
+        {
+            List<NotebookRecord> records = (eligible ?? Enumerable.Empty<WordEntry>())
+                .Select(FindRecord).Where(x => x != null && (x.notebook == Notebooks.Wrong
+                    || x.notebook == Notebooks.ErrorProne))
+                .GroupBy(x => DataLoader.WordKey(x.word), StringComparer.OrdinalIgnoreCase)
+                .Select(x => x.First()).ToList();
+            if (records.Count == 0 || count <= 0) return new List<WordEntry>();
+            if (state.problemFairRound < 1) state.problemFairRound = 1;
+
+            List<NotebookRecord> selected = records
+                .OrderBy(x => x.problemLastDrawRound >= state.problemFairRound ? 1 : 0)
+                .ThenBy(x => x.problemDrawCount)
+                .ThenBy(x => x.lastProblemCompletedAt != DateTime.MinValue
+                    && x.lastProblemCompletedAt >= x.lastProblemAttemptAt ? 1 : 0)
+                .ThenByDescending(x => x.errorCount)
+                .ThenBy(x => x.lastProblemCompletedAt)
+                .ThenBy(x => x.lastAnsweredAt)
+                .ThenBy(x => DataLoader.WordKey(x.word), StringComparer.OrdinalIgnoreCase)
+                .Take(count).ToList();
+            foreach (NotebookRecord record in selected)
+            {
+                record.problemDrawCount++;
+                record.problemLastDrawRound = state.problemFairRound;
+                record.lastEditedAt = now;
+            }
+            if (records.All(x => x.problemLastDrawRound >= state.problemFairRound))
+                state.problemFairRound++;
+            Save();
+            return selected.Select(x => x.word).ToList();
+        }
+
+        public void RecordProblemReviewActivity(WordEntry word, bool correct,
+            bool completed, DateTime when)
+        {
+            NotebookRecord record = FindRecord(word);
+            if (record == null) return;
+            record.lastProblemAttemptAt = when;
+            record.lastProblemResult = correct ? (completed ? "completed" : "correct") : "wrong";
+            if (completed) record.lastProblemCompletedAt = when;
+            record.lastEditedAt = when;
+            Save();
+        }
+
         public string GetNotebook(WordEntry word)
         {
             NotebookRecord record = FindRecord(word);
@@ -170,10 +381,28 @@ namespace EnglishDictationTool
 
         public void RestoreSnapshot(string json)
         {
+            // Learning undo must not undo an independently edited favorite.
+            List<NotebookRecord> favorites = state.records.Where(x => x.favorite).ToList();
+            List<FavoriteFolder> folders = state.favoriteFolders;
+            string defaultId = state.defaultFavoriteFolderId;
             NotebookState restored = new JavaScriptSerializer().Deserialize<NotebookState>(json);
             Validate(restored);
             state = restored;
+            state.favoriteFolders = folders; state.defaultFavoriteFolderId = defaultId;
             ConsolidateDuplicateWords();
+            foreach (NotebookRecord record in state.records)
+            { record.favorite = false; record.favoriteFolderIds = new List<string>(); }
+            foreach (NotebookRecord saved in favorites)
+            {
+                NotebookRecord record = FindRecord(saved.word);
+                if (record == null)
+                {
+                    record = new NotebookRecord { word = saved.word, notebook = Notebooks.None };
+                    state.records.Add(record);
+                }
+                record.favorite = true;
+                record.favoriteFolderIds = new List<string>(saved.favoriteFolderIds);
+            }
             EnrichPartsOfSpeech();
             Save();
         }
@@ -319,7 +548,15 @@ namespace EnglishDictationTool
 
         public void ClearWrongWords()
         {
-            state.records.RemoveAll(item => item.notebook == Notebooks.Wrong);
+            foreach (NotebookRecord record in state.records.Where(x =>
+                x.notebook == Notebooks.Wrong && x.favorite))
+            {
+                record.notebook = Notebooks.None;
+                record.correctCount = record.exampleCorrectCount = record.dictationCorrectCount
+                    = record.spellingCorrectCount = 0;
+                record.lastEditedAt = DateTime.Now;
+            }
+            state.records.RemoveAll(item => item.notebook == Notebooks.Wrong && !item.favorite);
             Save();
         }
 
@@ -356,6 +593,8 @@ namespace EnglishDictationTool
                     target = new NotebookRecord
                     {
                         word = DataLoader.MergeWordEntry(new[] { source.word }),
+                        favorite = source.favorite,
+                        favoriteFolderIds = source.favoriteFolderIds == null ? null : new List<string>(source.favoriteFolderIds),
                         notebook = source.notebook,
                         correctCount = source.correctCount,
                         exampleCorrectCount = source.exampleCorrectCount,
@@ -363,6 +602,11 @@ namespace EnglishDictationTool
                         spellingCorrectCount = source.spellingCorrectCount,
                         errorCount = source.errorCount,
                         lastAnsweredAt = source.lastAnsweredAt,
+                        problemDrawCount = source.problemDrawCount,
+                        problemLastDrawRound = source.problemLastDrawRound,
+                        lastProblemAttemptAt = source.lastProblemAttemptAt,
+                        lastProblemCompletedAt = source.lastProblemCompletedAt,
+                        lastProblemResult = source.lastProblemResult,
                         lastEditedAt = source.lastEditedAt == DateTime.MinValue
                             ? source.lastAnsweredAt : source.lastEditedAt
                     };
@@ -372,6 +616,9 @@ namespace EnglishDictationTool
                 }
                 changed = true;
                 target.word = DataLoader.MergeWordEntry(new[] { target.word, source.word });
+                target.favorite |= source.favorite;
+                target.favoriteFolderIds = (target.favoriteFolderIds ?? new List<string>())
+                    .Concat(source.favoriteFolderIds ?? new List<string>()).Distinct().ToList();
                 if (NotebookPriority(source.notebook) > NotebookPriority(target.notebook))
                     target.notebook = source.notebook;
                 target.correctCount = Math.Max(target.correctCount, source.correctCount);
@@ -379,6 +626,16 @@ namespace EnglishDictationTool
                 target.dictationCorrectCount = Math.Max(target.dictationCorrectCount, source.dictationCorrectCount);
                 target.spellingCorrectCount = Math.Max(target.spellingCorrectCount, source.spellingCorrectCount);
                 target.errorCount += source.errorCount;
+                target.problemDrawCount = Math.Max(target.problemDrawCount, source.problemDrawCount);
+                target.problemLastDrawRound = Math.Max(target.problemLastDrawRound,
+                    source.problemLastDrawRound);
+                if (source.lastProblemAttemptAt > target.lastProblemAttemptAt)
+                {
+                    target.lastProblemAttemptAt = source.lastProblemAttemptAt;
+                    target.lastProblemResult = source.lastProblemResult;
+                }
+                if (source.lastProblemCompletedAt > target.lastProblemCompletedAt)
+                    target.lastProblemCompletedAt = source.lastProblemCompletedAt;
                 if (source.lastAnsweredAt > target.lastAnsweredAt) target.lastAnsweredAt = source.lastAnsweredAt;
                 DateTime sourceEdited = source.lastEditedAt == DateTime.MinValue
                     ? source.lastAnsweredAt : source.lastEditedAt;
@@ -451,6 +708,7 @@ namespace EnglishDictationTool
                 reviewFirstLetter = true,
                 reviewCorrectTarget = 3,
                 masteryShortcut = (int)(Keys.Alt | Keys.J),
+                problemFairRound = 1,
                 records = new List<NotebookRecord>(),
                 recent = new List<WordEntry>()
             };

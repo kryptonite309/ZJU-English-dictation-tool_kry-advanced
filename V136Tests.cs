@@ -17,8 +17,9 @@ namespace EnglishDictationTool
             string upgradeName = ReleaseAssetNames.UpgradePackageName(version);
 
             object currentVersion = typeof(UpdateService).GetField("CurrentVersion").GetRawConstantValue();
-            if (!string.Equals(Convert.ToString(currentVersion), "1.3.6",
-                StringComparison.Ordinal)) failures.Add("current version");
+            Version runningVersion;
+            if (!Version.TryParse(Convert.ToString(currentVersion), out runningVersion)
+                || runningVersion < version) failures.Add("current version compatibility");
             if (fullName != "ZJU-English-dictation-tool_kry-advanced-v1.3.6-full.zip")
                 failures.Add("full package naming");
             if (upgradeName != "ZJU-English-dictation-tool_kry-advanced-v1.3.6-upgrade.zip")

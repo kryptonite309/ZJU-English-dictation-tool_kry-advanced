@@ -30,13 +30,16 @@ namespace EnglishDictationTool
         private CheckBox random, fuzzy, newExample, newDictation, newSpelling,
             listExample, listDictation, listSpelling, problemExample, problemDictation,
             problemSpelling, freeExample, freeDictation, freeSpelling, overlap, dueOnly,
+            problemFreeExample, problemFreeDictation, problemFreeSpelling,
+            problemFreeShowFirstLetter, problemFreeRetryOnWrong,
             carryCount, carryPreview, exampleFirstLetter, dictationMeaningHint,
             reviewFirstLetter, backupBeforeEnd, timerEnabled, updateOnStartup;
-        private TextBox days, previewKey, exampleHintKey, previousPageKey, nextPageKey,
+        private TextBox days, previewKey, exampleHintKey, previousPageKey, nextPageKey, favoriteKey,
             masteryKey, undoKey, backupKey, pauseKey;
         private ComboBox newQuestionOrder, listQuestionOrder, problemQuestionOrder,
             freeQuestionOrder, timerPrecision;
-        private ListBox newTaskOrder, listTaskOrder, problemTaskOrder, freeTaskOrder;
+        private ListBox newTaskOrder, listTaskOrder, problemTaskOrder, freeTaskOrder,
+            problemFreeTaskOrder;
         private TextBox speechReplayKey;
         private CheckBox speechEnabled, speechAutomatic;
         private ComboBox speechVoice;
@@ -115,6 +118,7 @@ namespace EnglishDictationTool
             BuildPlanTab(tabs);
             BuildLibraryTab(tabs);
             BuildAnswerTab(tabs);
+            BuildFavoritesTab(tabs);
             BuildShortcutTab(tabs);
             BuildPronunciationTab(tabs);
             BuildUpdateTab(tabs);
@@ -335,9 +339,13 @@ namespace EnglishDictationTool
             freeExample = Check("自由练习：例句填空", draft.freeExample);
             freeDictation = Check("自由练习：听写", draft.freeDictation);
             freeSpelling = Check("自由练习：普通拼写", draft.freeSpelling);
+            problemFreeExample = Check("错题自由模式：例句填空", draft.problemFreeExample);
+            problemFreeDictation = Check("错题自由模式：听写", draft.problemFreeDictation);
+            problemFreeSpelling = Check("错题自由模式：普通拼写", draft.problemFreeSpelling);
             foreach (CheckBox item in new[] { newExample, newDictation, newSpelling,
                 listExample, listDictation, listSpelling, problemExample, problemDictation,
-                problemSpelling, freeExample, freeDictation, freeSpelling }) page.Controls.Add(item);
+                problemSpelling, freeExample, freeDictation, freeSpelling,
+                problemFreeExample, problemFreeDictation, problemFreeSpelling }) page.Controls.Add(item);
 
             newQuestionOrder = QuestionOrderCombo(draft.newQuestionOrder);
             listQuestionOrder = QuestionOrderCombo(draft.listQuestionOrder);
@@ -351,6 +359,14 @@ namespace EnglishDictationTool
             listTaskOrder = AddTaskOrderEditor(page, "历史列表复习题型顺序", draft.listTaskOrder);
             problemTaskOrder = AddTaskOrderEditor(page, "错题复习题型顺序", draft.problemTaskOrder);
             freeTaskOrder = AddTaskOrderEditor(page, "自由练习题型顺序", draft.freeTaskOrder);
+            problemFreeTaskOrder = AddTaskOrderEditor(page, "错题自由模式题型顺序",
+                draft.problemFreeTaskOrder);
+            problemFreeShowFirstLetter = Check("错题自由模式普通拼写直接显示首字母",
+                draft.problemFreeShowFirstLetter);
+            problemFreeRetryOnWrong = Check("错题自由模式答错后复现（默认开启）",
+                draft.problemFreeRetryOnWrong);
+            page.Controls.Add(problemFreeShowFirstLetter);
+            page.Controls.Add(problemFreeRetryOnWrong);
             exampleFirstLetter = Check("所有例句填空启用分阶段首字母提示（默认开启）",
                 draft.exampleFirstLetterHints);
             page.Controls.Add(exampleFirstLetter);
@@ -380,7 +396,7 @@ namespace EnglishDictationTool
             Button manageNotebooks = Button("管理全部单词本", delegate
             {
                 if (RequestGuideAction("notebooks")) return;
-                new NotebookManagerForm(loader, notebooks).ShowDialog(this);
+                new NotebookManagerForm(loader, notebooks, (Keys)draft.favoriteKey).ShowDialog(this);
             });
             page.Controls.Add(acceptedAnswers);
             page.Controls.Add(manageNotebooks);
@@ -604,6 +620,29 @@ namespace EnglishDictationTool
             return capture;
         }
 
+        private void BuildFavoritesTab(TabControl tabs)
+        {
+            FlowLayoutPanel page = Page(tabs, "收藏夹");
+            page.Controls.Add(Label("创建、重命名和管理多个收藏夹，同一单词可同时属于多个收藏夹。收藏不会改变错题本、易错本或已掌握状态。", 1000));
+            Label summary = Label(string.Empty, 1000);
+            Action refresh = delegate
+            {
+                FavoriteFolder target = notebooks.GetFavoriteFolder(notebooks.DefaultFavoriteFolderId);
+                summary.Text = "当前有 " + notebooks.FavoriteFolders.Count + " 个收藏夹，共 "
+                    + notebooks.GetFavoriteWords().Count + " 个收藏词。快捷收藏夹为“" + target.name + "”。";
+            };
+            refresh(); page.Controls.Add(summary);
+            Button manage = Button("打开收藏夹管理", delegate
+            {
+                using (FavoriteManagerForm form = new FavoriteManagerForm(loader, notebooks, (Keys)store.Settings.favoriteKey))
+                    form.ShowDialog(this);
+                refresh();
+            });
+            manage.Width = 260; page.Controls.Add(manage);
+            page.Controls.Add(Label("学习展示、答题及回看页面：按收藏快捷键加入或移出快捷收藏夹，点击“收藏到…”多选归属。快捷键在“快捷键”页修改。", 1000));
+            page.Controls.Add(Label("自由练习：将练习来源设为“收藏夹”，再选择全部收藏或某个收藏夹。", 1000));
+        }
+
         private void BuildShortcutTab(TabControl tabs)
         {
             FlowLayoutPanel page = Page(tabs, "快捷键");
@@ -612,6 +651,7 @@ namespace EnglishDictationTool
             exampleHintKey = Shortcut(draft.exampleHintKey, true);
             previousPageKey = Shortcut(draft.previousPageKey, false);
             nextPageKey = Shortcut(draft.nextPageKey, false);
+            favoriteKey = Shortcut(draft.favoriteKey, false);
             masteryKey = Shortcut((int)notebooks.MasteryShortcut, false);
             undoKey = Shortcut(draft.undoKey, false);
             backupKey = Shortcut(draft.manualBackupKey, false);
@@ -621,6 +661,7 @@ namespace EnglishDictationTool
             page.Controls.Add(Row("例句提示 / 提交（默认 Enter）", exampleHintKey, 320));
             page.Controls.Add(Row("翻到上一页（默认 Shift+Q）", previousPageKey, 320));
             page.Controls.Add(Row("翻到下一页（默认 Shift+E）", nextPageKey, 320));
+            page.Controls.Add(Row("快捷收藏夹加入 / 移出（默认 Ctrl+L）", favoriteKey, 380));
             page.Controls.Add(Row("斩当前词", masteryKey, 320));
             page.Controls.Add(Row("撤销上一个词", undoKey, 320));
             page.Controls.Add(Row("手动备份", backupKey, 320));
@@ -734,12 +775,13 @@ namespace EnglishDictationTool
                 int exampleValue = (int)exampleHintKey.Tag;
                 int previousPageValue = (int)previousPageKey.Tag;
                 int nextPageValue = (int)nextPageKey.Tag;
+                int favoriteValue = (int)favoriteKey.Tag;
                 int masteryValue = (int)masteryKey.Tag;
                 int undoValue = (int)undoKey.Tag;
                 int backupValue = (int)backupKey.Tag;
                 int pauseValue = (int)pauseKey.Tag;
                 int speechValue = (int)speechReplayKey.Tag;
-                int[] exclusiveKeys = { previousPageValue, nextPageValue, masteryValue,
+                int[] exclusiveKeys = { previousPageValue, nextPageValue, favoriteValue, masteryValue,
                     undoValue, backupValue, pauseValue, speechValue };
                 if (exclusiveKeys.Distinct().Count() != exclusiveKeys.Length
                     || exclusiveKeys.Contains(previewValue) || exclusiveKeys.Contains(exampleValue))
@@ -760,6 +802,11 @@ namespace EnglishDictationTool
                 draft.problemExample = problemExample.Checked;
                 draft.problemDictation = problemDictation.Checked;
                 draft.problemSpelling = problemSpelling.Checked;
+                draft.problemFreeExample = problemFreeExample.Checked;
+                draft.problemFreeDictation = problemFreeDictation.Checked;
+                draft.problemFreeSpelling = problemFreeSpelling.Checked;
+                draft.problemFreeShowFirstLetter = problemFreeShowFirstLetter.Checked;
+                draft.problemFreeRetryOnWrong = problemFreeRetryOnWrong.Checked;
                 draft.freeExample = freeExample.Checked; draft.freeDictation = freeDictation.Checked;
                 draft.freeSpelling = freeSpelling.Checked;
                 draft.newQuestionOrder = QuestionOrderValue(newQuestionOrder);
@@ -770,6 +817,7 @@ namespace EnglishDictationTool
                 draft.listTaskOrder = TaskOrderValues(listTaskOrder);
                 draft.problemTaskOrder = TaskOrderValues(problemTaskOrder);
                 draft.freeTaskOrder = TaskOrderValues(freeTaskOrder);
+                draft.problemFreeTaskOrder = TaskOrderValues(problemFreeTaskOrder);
                 draft.exampleFirstLetterHints = exampleFirstLetter.Checked;
                 draft.dictationMeaningHint = dictationMeaningHint.Checked;
                 draft.exampleCorrectTarget = (int)exampleTarget.Value;
@@ -780,6 +828,7 @@ namespace EnglishDictationTool
                 draft.previewKey = previewValue; draft.exampleHintKey = exampleValue;
                 draft.previousPageKey = previousPageValue;
                 draft.nextPageKey = nextPageValue;
+                draft.favoriteKey = favoriteValue;
                 draft.undoKey = undoValue; draft.manualBackupKey = backupValue;
                 draft.pauseKey = pauseValue;
                 draft.undoLimit = (int)undoLimit.Value;

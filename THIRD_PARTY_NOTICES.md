@@ -28,3 +28,12 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
+
+## 默认动态主题素材
+
+默认主题沿用此前发布版本，相关素材来自以下 Wallpaper Engine 创意工坊作品。
+
+- https://steamcommunity.com/sharedfiles/filedetails/?id=3330154243
+- https://steamcommunity.com/sharedfiles/filedetails/?id=3158271900
+
+素材由原作者及相关权利方保留权利，本项目不宣称原创，也不额外授予素材的单独传播许可。如权利人对收录有疑问，请通过项目 Issues 联系，核实后会及时替换或移除。

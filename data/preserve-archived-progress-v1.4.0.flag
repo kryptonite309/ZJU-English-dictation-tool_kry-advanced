@@ -1,0 +1,3 @@
+KRY v1.4.0 progress preservation marker.
+Keep archived list statuses, stored completion records and word-pool placement.
+Do not replace existing learning state with development or test data.

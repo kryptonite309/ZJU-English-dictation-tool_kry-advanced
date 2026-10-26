@@ -906,6 +906,7 @@ namespace EnglishDictationTool
         public bool showFirstLetter { get; set; }
         public bool retryOnWrong { get; set; }
         public bool reviewMode { get; set; }
+        public bool favoriteMode { get; set; }
     }
 
     internal sealed class GameEngine
@@ -923,6 +924,7 @@ namespace EnglishDictationTool
         public bool ShowFirstLetter { get; set; }
         public bool RetryOnWrong { get; private set; }
         public bool IsReviewMode { get; private set; }
+        public bool IsFavoriteMode { get; private set; }
         public List<WordEntry> WrongWords { get { return notebooks.GetWords(Notebooks.Wrong); } }
 
         public GameEngine(DataLoader dataLoader, NotebookStore notebookStore)
@@ -964,6 +966,43 @@ namespace EnglishDictationTool
                 deck = Filter(loader.LoadWordList(book, units), filterMode);
                 if (orderMode == "book_random" || orderMode == "random") Shuffle(deck);
             }
+            StartDeck(deck, example, dictation, spelling, taskOrder, showFirstLetter, retryOnWrong, false);
+        }
+
+        public void StartFavorites(string filterMode, string orderMode, bool example,
+            bool dictation, bool spelling, IEnumerable<string> taskOrder,
+            bool showFirstLetter, bool retryOnWrong, string folderId = null)
+        {
+            List<WordEntry> favorites = notebooks.GetFavoriteWords(folderId);
+            HashSet<string> favoriteKeys = new HashSet<string>(favorites.Select(DataLoader.WordKey));
+            List<WordEntry> vocabulary = new List<WordEntry>(favorites);
+            foreach (string book in loader.GetAvailableBooks())
+                vocabulary.AddRange(loader.LoadWordList(book, loader.GetUnitsForBook(book))
+                    .Where(x => favoriteKeys.Contains(DataLoader.WordKey(x))));
+            Dictionary<string, WordEntry> byKey = DataLoader.MergeWordEntries(vocabulary)
+                .ToDictionary(DataLoader.WordKey);
+            HashSet<string> seen = new HashSet<string>();
+            List<WordEntry> deck = new List<WordEntry>();
+            foreach (string book in loader.GetAvailableBooks())
+                foreach (string unit in loader.GetUnitsForBook(book))
+                {
+                    List<WordEntry> group = loader.LoadWordList(book, new[] { unit })
+                        .Where(x => byKey.ContainsKey(DataLoader.WordKey(x)))
+                        .Select(x => byKey[DataLoader.WordKey(x)])
+                        .Where(x => seen.Add(DataLoader.WordKey(x))).ToList();
+                    group = Filter(group, filterMode, true);
+                    if (orderMode == "unit_random") Shuffle(group);
+                    deck.AddRange(group);
+                }
+            deck.AddRange(Filter(favorites.Where(x => seen.Add(DataLoader.WordKey(x))), filterMode, true));
+            if (orderMode == "book_random" || orderMode == "random") Shuffle(deck);
+            StartDeck(deck, example, dictation, spelling, taskOrder, showFirstLetter, retryOnWrong, true);
+        }
+
+        private void StartDeck(List<WordEntry> deck, bool example, bool dictation,
+            bool spelling, IEnumerable<string> taskOrder, bool showFirstLetter,
+            bool retryOnWrong, bool favoriteMode)
+        {
             exampleDeck = new List<ExampleQuestion>();
             modeDeck = new List<string>();
             List<WordEntry> expanded = new List<WordEntry>();
@@ -995,13 +1034,15 @@ namespace EnglishDictationTool
             ShowFirstLetter = showFirstLetter;
             RetryOnWrong = retryOnWrong;
             IsReviewMode = false;
+            IsFavoriteMode = favoriteMode;
             ClearExampleCache();
         }
 
-        private List<WordEntry> Filter(IEnumerable<WordEntry> words, string filterMode)
+        private List<WordEntry> Filter(IEnumerable<WordEntry> words, string filterMode,
+            bool includeMastered = false)
         {
             IEnumerable<WordEntry> query = words.Where(item =>
-                notebooks.GetNotebook(item) != Notebooks.Mastered);
+                includeMastered || notebooks.GetNotebook(item) != Notebooks.Mastered);
             if (filterMode == "words_only") query = query.Where(item =>
                 !Regex.IsMatch(CleanEnglish(item), @"\s"));
             else if (filterMode == "phrases_only") query = query.Where(item =>
@@ -1018,10 +1059,56 @@ namespace EnglishDictationTool
             ShowFirstLetter = notebooks.ReviewFirstLetter;
             RetryOnWrong = false;
             IsReviewMode = true;
+            IsFavoriteMode = false;
             exampleDeck = new List<ExampleQuestion>();
             modeDeck = CurrentDeck.Select(x => "word").ToList();
             ClearExampleCache();
             return true;
+        }
+
+        public bool StartProblemFreeMode(IEnumerable<WordEntry> words, bool example,
+            bool dictation, bool spelling, IEnumerable<string> taskOrder,
+            bool showFirstLetter, bool retryOnWrong)
+        {
+            List<WordEntry> source = (words ?? Enumerable.Empty<WordEntry>())
+                .Where(x => x != null && notebooks.GetNotebook(x) != Notebooks.Mastered)
+                .GroupBy(DataLoader.WordKey, StringComparer.OrdinalIgnoreCase)
+                .Select(x => x.First()).ToList();
+            if (source.Count == 0) return false;
+            Shuffle(source);
+            List<WordEntry> expanded = new List<WordEntry>();
+            exampleDeck = new List<ExampleQuestion>();
+            modeDeck = new List<string>();
+            foreach (WordEntry word in source)
+            {
+                foreach (string mode in taskOrder ?? new[] { "example", "dictation", "spelling" })
+                {
+                    if (mode == "example" && example)
+                    {
+                        foreach (ExampleQuestion question in ExampleCloze.Questions(word))
+                        {
+                            expanded.Add(word); exampleDeck.Add(question); modeDeck.Add("example");
+                        }
+                    }
+                    else if (mode == "dictation" && dictation)
+                    {
+                        expanded.Add(word); exampleDeck.Add(null); modeDeck.Add("dictation");
+                    }
+                    else if (mode == "spelling" && spelling)
+                    {
+                        expanded.Add(word); exampleDeck.Add(null); modeDeck.Add("word");
+                    }
+                }
+            }
+            CurrentDeck = expanded;
+            CurrentIndex = 0;
+            QuestionMode = modeDeck.Count == 0 ? "word" : modeDeck[0];
+            ShowFirstLetter = showFirstLetter;
+            RetryOnWrong = retryOnWrong;
+            IsReviewMode = true;
+            IsFavoriteMode = false;
+            ClearExampleCache();
+            return CurrentDeck.Count > 0;
         }
 
         public ExampleQuestion GetExampleQuestion()
@@ -1041,8 +1128,9 @@ namespace EnglishDictationTool
             while (CurrentIndex < CurrentDeck.Count)
             {
                 string notebook = notebooks.GetNotebook(CurrentDeck[CurrentIndex]);
-                if (IsReviewMode && notebook != Notebooks.Wrong) CurrentIndex++;
-                else if (!IsReviewMode && notebook == Notebooks.Mastered) CurrentIndex++;
+                if (IsReviewMode && notebook != Notebooks.Wrong
+                    && notebook != Notebooks.ErrorProne) CurrentIndex++;
+                else if (!IsReviewMode && !IsFavoriteMode && notebook == Notebooks.Mastered) CurrentIndex++;
                 else break;
             }
             if (CurrentIndex >= CurrentDeck.Count) return null;
@@ -1051,6 +1139,13 @@ namespace EnglishDictationTool
         }
 
         public AnswerOutcome CheckAnswer(string userInput)
+        {
+            return CheckAnswer(userInput, null, true);
+        }
+
+        public AnswerOutcome CheckAnswer(string userInput,
+            Func<WordEntry, bool, string, bool, AnswerOutcome> recorder,
+            bool firstAttempt)
         {
             WordEntry current = GetNextQuestion();
             if (current == null) return new AnswerOutcome();
@@ -1066,7 +1161,10 @@ namespace EnglishDictationTool
                     : string.Equals(DataLoader.Sanitize(userInput).ToLowerInvariant(),
                         CleanEnglish(current).ToLowerInvariant(), StringComparison.Ordinal));
 
-            AnswerOutcome outcome = notebooks.RecordAnswer(current, correct, IsReviewMode);
+            string recordedMode = QuestionMode == "word" ? "spelling" : QuestionMode;
+            AnswerOutcome outcome = recorder == null
+                ? notebooks.RecordAnswer(current, correct, IsReviewMode)
+                : recorder(current, correct, recordedMode, firstAttempt);
             outcome.CorrectAnswer = example == null ? CleanEnglish(current) : example.answer;
             CurrentIndex++;
             return outcome;
@@ -1109,7 +1207,7 @@ namespace EnglishDictationTool
                 examples = new List<ExampleQuestion>(exampleDeck),
                 modes = new List<string>(modeDeck), currentIndex = CurrentIndex,
                 showFirstLetter = ShowFirstLetter, retryOnWrong = RetryOnWrong,
-                reviewMode = IsReviewMode
+                reviewMode = IsReviewMode, favoriteMode = IsFavoriteMode
             };
         }
 
@@ -1127,6 +1225,7 @@ namespace EnglishDictationTool
             ShowFirstLetter = snapshot.showFirstLetter;
             RetryOnWrong = snapshot.retryOnWrong;
             IsReviewMode = snapshot.reviewMode;
+            IsFavoriteMode = snapshot.favoriteMode;
             GetNextQuestion();
         }
 
@@ -1281,7 +1380,7 @@ namespace EnglishDictationTool
         public FreePracticeForm()
         {
             ModernUI.ApplyAppIcon(this);
-            Text = "自由练习  KRY 增强版 v1.3.6";
+            Text = "自由练习  KRY 增强版 v1.4.0";
             StartPosition = FormStartPosition.CenterScreen;
             ClientSize = ModernUI.FitWindow(1320, 820);
             MinimumSize = new Size(920, 620);
@@ -1385,6 +1484,9 @@ namespace EnglishDictationTool
         private TextBox inputLine;
         private DarkComboBox bookCombo;
         private CheckedListBox unitList;
+        private DarkComboBox freeSource;
+        private DarkComboBox freeFavoriteFolder;
+        private Button unitToggleButton;
         private RadioButton contentAll;
         private RadioButton contentWords;
         private RadioButton contentPhrases;
@@ -1427,6 +1529,10 @@ namespace EnglishDictationTool
         private AnswerFeedback freeFeedback;
         private SessionSummaryView freeSummary;
         private Button freeReplayButton, freeNextButton, freeEndButton;
+        private Button freePreviousButton, freeFavoriteButton;
+        private readonly ToolTip freeFavoriteTip = new ToolTip();
+        private FavoriteShortcutFilter freeFavoriteShortcuts;
+        private int freeHistoryIndex = -1;
         private LinkLabel githubLink, emailLink;
         private OnboardingController onboarding;
 
@@ -1447,7 +1553,7 @@ namespace EnglishDictationTool
             freePronouncer = new WordPronouncer(freePronunciationSettings);
             keybindings = LoadKeybindings();
 
-            Text = "大英默写器  KRY 增强版 v1.3.6";
+            Text = "大英默写器  KRY 增强版 v1.4.0 收藏夹修正版";
             StartPosition = FormStartPosition.CenterScreen;
             ClientSize = ModernUI.FitWindow(1540, 920);
             MinimumSize = new Size(1100, 720);
@@ -1466,7 +1572,7 @@ namespace EnglishDictationTool
                 },
                 delegate { return new AppearanceSettingsForm(appearance); },
                 delegate { return new AcceptedAnswersForm(study, loader); },
-                delegate { return new NotebookManagerForm(loader, notebooks); },
+                delegate { return new NotebookManagerForm(loader, notebooks, (Keys)study.Settings.favoriteKey); },
                 delegate { return new StatisticsForm(study, practice, appearance); },
                 RefreshAfterSettings);
             notebooks.Changed += delegate
@@ -1474,6 +1580,8 @@ namespace EnglishDictationTool
                 UpdateReviewButtonCount();
                 RefreshRecentQueue();
                 UpdateDailyButtons();
+                UpdateFreeFavoriteButton();
+                RefreshFavoriteFolderChoices(false);
             };
             study.Changed += delegate { UpdateDailyButtons(); };
             PopulateBooks();
@@ -1552,10 +1660,16 @@ namespace EnglishDictationTool
         protected override void OnFormClosed(FormClosedEventArgs e)
         {
             if (practice.Current != null && practice.Current.active)
-                practice.SavePosition(engine, inputLine == null ? string.Empty : inputLine.Text,
+            {
+                practice.SavePosition(engine, freeHistoryIndex >= 0 ? practice.Current.input
+                    : inputLine == null ? string.Empty : inputLine.Text,
                     exampleRevealStage, freeDictationMeaningShown, true);
+                ArchiveStaleProblemFreeSession();
+            }
             if (freeLearningTimer != null) freeLearningTimer.Dispose();
             if (freePronouncer != null) freePronouncer.Dispose();
+            if (freeFavoriteShortcuts != null) freeFavoriteShortcuts.Dispose();
+            freeFavoriteTip.Dispose();
             if (freePracticeWindow != null && !freePracticeWindow.IsDisposed)
             {
                 freePracticeWindow.AllowClose = true;
@@ -1830,6 +1944,25 @@ namespace EnglishDictationTool
             answerColumn.Controls.Add(MakeLabel("题型与作答"));
             notebookColumn.Controls.Add(MakeLabel("词本与快捷键"));
 
+            selectionColumn.Controls.Add(MakeLabel("练习来源"));
+            freeSource = new DarkComboBox { Width = 340 };
+            freeSource.Items.AddRange(new object[] { "词书与单元", "收藏夹" });
+            freeSource.SelectedIndex = study.Settings.freeSource == "favorites" ? 1 : 0;
+            freeSource.SelectedIndexChanged += delegate { UpdateFreeSourceControls(); };
+            selectionColumn.Controls.Add(freeSource);
+            freeFavoriteFolder = new DarkComboBox { Width = 340 };
+            selectionColumn.Controls.Add(freeFavoriteFolder);
+            RefreshFavoriteFolderChoices(true);
+            Button manageFavorites = MakeButton("管理收藏夹");
+            manageFavorites.Width = 340;
+            manageFavorites.Click += delegate
+            {
+                using (FavoriteManagerForm manager = new FavoriteManagerForm(loader, notebooks, (Keys)study.Settings.favoriteKey))
+                    manager.ShowDialog(settingsPanel.FindForm() ?? this);
+                RefreshFavoriteFolderChoices(false);
+            };
+            selectionColumn.Controls.Add(manageFavorites);
+
             selectionColumn.Controls.Add(MakeLabel("选择书本"));
             bookCombo = new DarkComboBox();
             bookCombo.Width = 340;
@@ -1843,6 +1976,15 @@ namespace EnglishDictationTool
             unitList.CheckOnClick = true;
             unitList.IntegralHeight = false;
             selectionColumn.Controls.Add(unitList);
+            unitToggleButton = MakeButton("全部取消");
+            unitToggleButton.Width = 340;
+            unitToggleButton.Click += delegate { ToggleAllFreeUnits(); };
+            unitList.ItemCheck += delegate
+            {
+                if (IsHandleCreated) BeginInvoke((Action)UpdateUnitToggleText);
+            };
+            selectionColumn.Controls.Add(unitToggleButton);
+            UpdateFreeSourceControls();
 
             contentAll = MakeRadio("全部（单词 + 短语）",
                 study.Settings.freeContentMode == "all");
@@ -1941,7 +2083,7 @@ namespace EnglishDictationTool
             };
             notebookColumn.Controls.Add(statisticsButton);
 
-            reviewButton = MakeButton("复习错题 (0)");
+            reviewButton = MakeButton("错题自由模式 (0)");
             reviewButton.Click += delegate { StartReview(); };
             answerColumn.Controls.Add(reviewButton);
 
@@ -2083,7 +2225,17 @@ namespace EnglishDictationTool
             freeEndButton = MakeButton("结束列表"); freeEndButton.Width = 112;
             freeEndButton.Click += delegate { EndFreeList(); };
             foreach (Button extra in new[] { freeReplayButton, freeNextButton, freeEndButton })
-            { extra.Enabled = false; freeToolbar.Controls.Add(extra); }
+            { extra.Width = 150; extra.Enabled = false; freeToolbar.Controls.Add(extra); }
+            freePreviousButton = MakeButton("上一页"); freePreviousButton.Width = 140;
+            freePreviousButton.Enabled = false;
+            freePreviousButton.Click += delegate { PreviousFreePage(); };
+            freeToolbar.Controls.Add(freePreviousButton);
+            freeFavoriteButton = MakeButton("收藏单词"); freeFavoriteButton.Width = 150;
+            freeFavoriteButton.Enabled = false;
+            freeFavoriteButton.Click += delegate { EditFreeFavoriteFolders(); };
+            freeToolbar.Controls.Add(freeFavoriteButton);
+            freeFavoriteShortcuts = new FavoriteShortcutFilter(freePracticeWindow,
+                delegate { return (Keys)study.Settings.favoriteKey; }, ToggleFreeFavorite);
             freePauseOverlay = new PauseOverlay { Visible = false };
             freePauseOverlay.ResumeRequested += delegate { ResumeFreePractice(); };
             freePracticeWindow.Controls.Add(freePauseOverlay);
@@ -2111,6 +2263,15 @@ namespace EnglishDictationTool
                 return true;
             }
             if (freePaused) return true;
+            if (keyData == (Keys)study.Settings.favoriteKey) { ToggleFreeFavorite(); return true; }
+            if (keyData == (Keys)study.Settings.previousPageKey) { PreviousFreePage(); return true; }
+            if (keyData == (Keys)study.Settings.nextPageKey) { NextFreePage(); return true; }
+            if (freeHistoryIndex >= 0)
+            {
+                if (keyData == Keys.Enter) { NextFreePage(); return true; }
+                if (keyData == (Keys)freePronunciationSettings.replayKey) ReplayFreeWord();
+                return true;
+            }
             if (freeFeedback != null)
             {
                 if (keyData == Keys.Enter) { ContinueFreeFeedback(); return true; }
@@ -2179,11 +2340,37 @@ namespace EnglishDictationTool
 
         private void SaveFreePracticeWindowState()
         {
-            if (practice.Current != null && practice.Current.active)
+            if (practice.Current != null && practice.Current.active && freeHistoryIndex < 0)
                 practice.SavePosition(engine, inputLine == null ? string.Empty : inputLine.Text,
                     exampleRevealStage, freeDictationMeaningShown, freePaused);
             if (freePronouncer != null) freePronouncer.Stop();
             if (freeLearningTimer != null) freeLearningTimer.Refresh();
+            ArchiveStaleProblemFreeSession();
+        }
+
+        private bool ArchiveStaleProblemFreeSession()
+        {
+            PracticeSessionState session = practice.Current;
+            if (session == null || !session.active || session.kind != "problem_free"
+                || string.Equals(session.studyDate, StudyStore.StudyDayKey(DateTime.Now),
+                    StringComparison.Ordinal)) return false;
+            if (freeLearningTimer != null) freeLearningTimer.StopAndCommit();
+            practice.FinishCurrent();
+            practice.SaveFeedback(null);
+            freeFeedback = null;
+            currentWord = null;
+            freePaused = false;
+            if (freePauseButton != null) freePauseButton.Visible = false;
+            if (freeStartButton != null) freeStartButton.Visible = true;
+            if (freeEndButton != null) freeEndButton.Enabled = false;
+            if (freeProgress != null) freeProgress.Visible = false;
+            if (logArea != null)
+            {
+                logArea.ClearContent();
+                AppendToLog("上一学习日的错题自由模式已按实际作答记录自动归档。", "normal");
+            }
+            RefreshModeSelection();
+            return true;
         }
 
         private void UpdateDailyButtons()
@@ -2263,12 +2450,19 @@ namespace EnglishDictationTool
             contentPhrases.Checked = study.Settings.freeContentMode == "phrases_only";
             showFirstLetter.Checked = study.Settings.freeShowFirstLetter;
             retryOnWrong.Checked = study.Settings.freeRetryOnWrong;
+            freeSource.SelectedIndex = study.Settings.freeSource == "favorites" ? 1 : 0;
+            RefreshFavoriteFolderChoices(true);
+            UpdateFreeSourceControls();
         }
 
         private void CollectFreeSettingsControls(StudySettings target, bool includePracticeChoices)
         {
             if (target == null || bookCombo == null || unitList == null) return;
             target.freeBook = bookCombo.Text ?? string.Empty;
+            target.freeSource = freeSource.SelectedIndex == 1 ? "favorites" : "units";
+            FavoriteFolder favoriteFolder = freeFavoriteFolder.SelectedItem as FavoriteFolder;
+            target.freeFavoriteFolderId = favoriteFolder == null ? string.Empty : favoriteFolder.id;
+            target.freeUnitsConfigured = true;
             target.freeUnits = unitList.CheckedItems.Cast<object>()
                 .Select(item => item.ToString()).ToList();
             target.freeContentMode = contentWords.Checked ? "words_only"
@@ -2320,7 +2514,7 @@ namespace EnglishDictationTool
         {
             try
             {
-                study.SettleCrossDay(DateTime.Now);
+                if (!ResolveCrossDay("new")) return;
                 if (!EnsureDictationAvailable("new", false)) return;
                 if (study.ActiveFor("new") != null) { OpenStudySession("new"); return; }
                 using (QuotaForm form = new QuotaForm(study, loader))
@@ -2335,14 +2529,25 @@ namespace EnglishDictationTool
 
         private void StartDailyList()
         {
+            if (!ResolveCrossDay("list_review")) return;
             if (!EnsureDictationAvailable("list_review", false)) return;
             if (study.ActiveFor("list_review") != null) { OpenStudySession("list_review"); return; }
-            try { study.StartListReview(DateTime.Now); OpenStudySession("list_review"); }
+            try
+            {
+                using (ListReviewSelectionForm form = new ListReviewSelectionForm(study))
+                {
+                    if (form.ShowDialog(this) != DialogResult.OK) return;
+                    if (form.UseAutomatic) study.StartListReview(DateTime.Now);
+                    else study.StartSelectedListReview(form.SelectedIds, DateTime.Now);
+                }
+                OpenStudySession("list_review");
+            }
             catch (Exception error) { ShowDarkDialog("列表复习无法开始", error.Message, false); }
         }
 
         private void StartDailyProblems()
         {
+            if (!ResolveCrossDay("problem_review")) return;
             if (!EnsureDictationAvailable("problem_review", false)) return;
             if (study.ActiveFor("problem_review") != null) { OpenStudySession("problem_review"); return; }
             try { study.StartProblemReview(DateTime.Now); OpenStudySession("problem_review"); }
@@ -2355,18 +2560,60 @@ namespace EnglishDictationTool
             if (active == null) return;
             string title = kind == "new" ? "新学" : kind == "list_review" ? "历史列表复习" : "错题复习";
             string message = "确定手动结束“" + title + "”当前列表吗？\n\n"
-                + "已经完成本部分全部要求的单词会保留；其余单词会退出当前列表。"
-                + (kind == "new" ? "未完成词会回到新词池顶端，供下次优先抽取。" : "未完成词以后仍可再次复习。")
+                + (kind == "new"
+                    ? "已经完成本部分全部要求的单词会保留；未完成单词回到普通未抽取池，不额外提高优先级。"
+                    : kind == "list_review"
+                    ? "本次作答记录会保留，未完成部分回归原列表。以后手动选择该列表时，完整列表会一起出现。"
+                    : "本次临时抽取列表会结束；单词仍按当前归属留在错题本或易错本中。")
                 + (study.Settings.backupBeforeManualEnd
                     ? "\n\n执行前会自动创建一份手动备份；可在设置中关闭。"
                     : "\n\n当前已关闭结束前自动备份；可在设置中重新开启。" );
             if (MessageBox.Show(this, message, "结束当前列表", MessageBoxButtons.YesNo,
                 MessageBoxIcon.Warning) != DialogResult.Yes) return;
+            ExecuteEndDaily(kind);
+        }
+
+        private bool ResolveCrossDay(string kind)
+        {
+            StudyList active = study.ActiveFor(kind);
+            if (active == null || !study.IsCrossDay(active, DateTime.Now)) return true;
+            string title = kind == "new" ? "新学" : kind == "list_review"
+                ? "历史列表复习" : "错题复习";
+            string detail = kind == "new"
+                ? "结束后，未完成单词回到普通未抽取池。"
+                : kind == "list_review"
+                ? "结束后，未完成部分回归原列表；以后选择该列表时仍按完整列表复习。"
+                : "结束后，本次临时列表关闭；单词仍保留在错题本或易错本。";
+            DialogResult choice = MessageBox.Show(this,
+                "检测到跨学习日未完成的“" + title + "”列表。\n\n"
+                + "选择“是”：继续原列表\n选择“否”：结束当前列表\n选择“取消”：稍后处理\n\n"
+                + detail,
+                "跨日未完成列表", MessageBoxButtons.YesNoCancel, MessageBoxIcon.Question);
+            if (choice == DialogResult.Yes)
+            {
+                study.ContinueCrossDay(kind, DateTime.Now);
+                return true;
+            }
+            if (choice == DialogResult.No) ExecuteEndDaily(kind);
+            return false;
+        }
+
+        private void ExecuteEndDaily(string kind)
+        {
             if (study.Settings.backupBeforeManualEnd && !ManualBackup()) return;
             try
             {
                 StudyEndResult result = study.EndActive(kind, DateTime.Now);
-                ShowDarkDialog("列表已结束", "保留 " + result.kept + " 个，释放 " + result.released + " 个。", false);
+                string resultText = kind == "new"
+                    ? "保留已完成单词 " + result.kept + " 个；未完成单词 " + result.released
+                        + " 个已回到普通未抽取池。"
+                    : kind == "list_review"
+                    ? "本次记录已保存。完整列表共 " + (result.kept + result.released)
+                        + " 个单词，其中 " + result.kept + " 个已完成、" + result.released
+                        + " 个未完成；以后可重新选择整份列表。"
+                    : "本次错题复习已结束。已完成 " + result.kept + " 个，未完成 "
+                        + result.released + " 个；单词本归属保持不变。";
+                ShowDarkDialog("列表已结束", resultText, false);
                 UpdateDailyButtons();
             }
             catch (Exception error) { ShowDarkDialog("无法结束列表", error.Message, false); }
@@ -2427,7 +2674,8 @@ namespace EnglishDictationTool
                 || shortcut == (Keys)study.Settings.previewKey
                 || shortcut == (Keys)study.Settings.exampleHintKey
                 || shortcut == (Keys)study.Settings.previousPageKey
-                || shortcut == (Keys)study.Settings.nextPageKey)
+                || shortcut == (Keys)study.Settings.nextPageKey
+                || shortcut == (Keys)study.Settings.favoriteKey)
             {
                 ShowDarkDialog("快捷键冲突", "该按键已分配给每日学习中的其他操作。", false);
                 return;
@@ -2489,7 +2737,7 @@ namespace EnglishDictationTool
         private void OpenNotebookManager()
         {
             Form owner = settingsPanel.FindForm() ?? this;
-            using (NotebookManagerForm manager = new NotebookManagerForm(loader, notebooks))
+            using (NotebookManagerForm manager = new NotebookManagerForm(loader, notebooks, (Keys)study.Settings.favoriteKey))
             {
                 manager.ShowDialog(owner);
             }
@@ -2500,6 +2748,7 @@ namespace EnglishDictationTool
 
         private void MasterCurrentWord()
         {
+            if (freeHistoryIndex >= 0) return;
             if (freeFeedback != null || freePaused || freeSummary != null) return;
             if (engine.GetNextQuestion() != null) study.CaptureExternalUndo(engine.GetNextQuestion());
             WordEntry mastered = engine.MasterCurrent();
@@ -2837,7 +3086,7 @@ namespace EnglishDictationTool
             unitList.Items.Clear();
             bool useSaved = string.Equals(bookCombo.Text, study.Settings.freeBook,
                 StringComparison.OrdinalIgnoreCase)
-                && study.Settings.freeUnits != null && study.Settings.freeUnits.Count > 0;
+                && study.Settings.freeUnits != null && study.Settings.freeUnitsConfigured;
             int selected = 0;
             foreach (string unit in loader.GetUnitsForBook(bookCombo.Text))
             {
@@ -2846,9 +3095,48 @@ namespace EnglishDictationTool
                 unitList.Items.Add(unit, isChecked);
                 if (isChecked) selected++;
             }
-            if (useSaved && selected == 0)
-                for (int index = 0; index < unitList.Items.Count; index++)
-                    unitList.SetItemChecked(index, true);
+            UpdateUnitToggleText();
+        }
+
+        private void UpdateFreeSourceControls()
+        {
+            bool byUnits = freeSource == null || freeSource.SelectedIndex != 1;
+            if (freeFavoriteFolder != null) freeFavoriteFolder.Enabled = !byUnits;
+            if (bookCombo != null) bookCombo.Enabled = byUnits;
+            if (unitList != null) unitList.Enabled = byUnits;
+            if (unitToggleButton != null) unitToggleButton.Enabled = byUnits;
+        }
+
+        private void RefreshFavoriteFolderChoices(bool fromSettings)
+        {
+            if (freeFavoriteFolder == null) return;
+            FavoriteFolder previous = freeFavoriteFolder.SelectedItem as FavoriteFolder;
+            string selected = fromSettings || previous == null ? study.Settings.freeFavoriteFolderId : previous.id;
+            freeFavoriteFolder.BeginUpdate();
+            try
+            {
+                freeFavoriteFolder.Items.Clear();
+                freeFavoriteFolder.Items.Add(new FavoriteFolder { id = string.Empty, name = "全部收藏（去重）" });
+                foreach (FavoriteFolder folder in notebooks.FavoriteFolders) freeFavoriteFolder.Items.Add(folder);
+                int index = freeFavoriteFolder.Items.Cast<FavoriteFolder>().ToList().FindIndex(x => x.id == selected);
+                freeFavoriteFolder.SelectedIndex = index < 0 ? 0 : index;
+            }
+            finally { freeFavoriteFolder.EndUpdate(); }
+        }
+
+        private void UpdateUnitToggleText()
+        {
+            if (unitToggleButton != null) unitToggleButton.Text = unitList.Items.Count > 0
+                && unitList.CheckedItems.Count == unitList.Items.Count ? "全部取消" : "一键全选";
+        }
+
+        private void ToggleAllFreeUnits()
+        {
+            bool select = unitList.CheckedItems.Count != unitList.Items.Count;
+            unitList.BeginUpdate();
+            try { for (int index = 0; index < unitList.Items.Count; index++) unitList.SetItemChecked(index, select); }
+            finally { unitList.EndUpdate(); }
+            UpdateUnitToggleText();
         }
 
         private Dictionary<string, string> LoadKeybindings()
@@ -2889,13 +3177,17 @@ namespace EnglishDictationTool
             ClearFreeSummary();
             if (practice.Current != null && practice.Current.active)
             {
-                RestoreFreePracticeIfNeeded();
-                if (freePaused) ResumeFreePractice();
-                return;
+                if (!ArchiveStaleProblemFreeSession())
+                {
+                    RestoreFreePracticeIfNeeded();
+                    if (freePaused) ResumeFreePractice();
+                    return;
+                }
             }
             List<string> selectedUnits = unitList.CheckedItems.Cast<object>()
                 .Select(item => item.ToString()).ToList();
-            if (selectedUnits.Count == 0)
+            bool favorites = freeSource.SelectedIndex == 1;
+            if (!favorites && selectedUnits.Count == 0)
             {
                 ShowDarkDialog("提示", "请至少选择一个单元！", false);
                 return;
@@ -2914,17 +3206,24 @@ namespace EnglishDictationTool
                 : orderRandom.Checked ? "book_random" : "sequential";
             CollectFreeSettingsControls(study.Settings, true);
             study.SaveSettings();
-            engine.StartGame(bookCombo.Text, selectedUnits, filterMode, orderMode,
-                questionExample.Checked, questionDictation.Checked && !freeDictationTemporarilyDisabled,
-                questionWord.Checked,
-                study.Settings.freeTaskOrder, showFirstLetter.Checked, retryOnWrong.Checked);
+            if (favorites)
+                engine.StartFavorites(filterMode, orderMode, questionExample.Checked,
+                    questionDictation.Checked && !freeDictationTemporarilyDisabled, questionWord.Checked,
+                    study.Settings.freeTaskOrder, showFirstLetter.Checked, retryOnWrong.Checked,
+                    study.Settings.freeFavoriteFolderId);
+            else
+                engine.StartGame(bookCombo.Text, selectedUnits, filterMode, orderMode,
+                    questionExample.Checked, questionDictation.Checked && !freeDictationTemporarilyDisabled,
+                    questionWord.Checked,
+                    study.Settings.freeTaskOrder, showFirstLetter.Checked, retryOnWrong.Checked);
 
             if (engine.CurrentDeck.Count == 0)
             {
                 ShowDarkDialog("无法开始", "所选范围内没有符合条件的题目。", false);
                 return;
             }
-            practice.Begin(engine);
+            practice.Begin(engine, favorites ? "favorites" : "free");
+            freeHistoryIndex = -1;
             freeFeedback = null; freeEndButton.Enabled = true;
             freePaused = false;
             freePauseButton.Visible = true;
@@ -2947,15 +3246,25 @@ namespace EnglishDictationTool
             ClearFreeSummary();
             if (practice.Current != null && practice.Current.active)
             {
-                RestoreFreePracticeIfNeeded();
-                return;
+                if (!ArchiveStaleProblemFreeSession())
+                {
+                    RestoreFreePracticeIfNeeded();
+                    return;
+                }
             }
-            if (!engine.StartReviewMode())
+            bool problemDictation = study.Settings.problemFreeDictation;
+            if (problemDictation && !EnsureProblemFreeDictationAvailable(ref problemDictation)) return;
+            if (!engine.StartProblemFreeMode(notebooks.GetProblemWords(),
+                study.Settings.problemFreeExample, problemDictation,
+                study.Settings.problemFreeSpelling, study.Settings.problemFreeTaskOrder,
+                study.Settings.problemFreeShowFirstLetter,
+                study.Settings.problemFreeRetryOnWrong))
             {
-                ShowDarkDialog("提示", "错题本是空的，太棒了！", false);
+                ShowDarkDialog("提示", "错题本和易错本中没有可练习的单词。", false);
                 return;
             }
-            practice.Begin(engine);
+            practice.Begin(engine, "problem_free");
+            freeHistoryIndex = -1;
             freeFeedback = null; freeEndButton.Enabled = true;
             freePaused = false;
             freePauseButton.Visible = true;
@@ -2965,19 +3274,50 @@ namespace EnglishDictationTool
             StartFreeTimer(0);
 
             logArea.ClearContent();
-            AppendToLog(string.Format("--- 错题本复习开始（{0}首字母，连续答对 {1} 次后进入易错本）---",
-                notebooks.ReviewFirstLetter ? "显示" : "不显示", notebooks.ReviewCorrectTarget), "normal");
+            AppendToLog("--- 错题自由模式开始 ---", "normal");
+            AppendToLog("本轮已将错题本与易错本中的单词去重并随机排列；作答多少记录多少。",
+                "normal");
             inputLine.Enabled = true;
             AskNextQuestion();
             OpenFreePracticeWindow();
         }
 
+        private bool EnsureProblemFreeDictationAvailable(ref bool includeDictation)
+        {
+            if (!includeDictation) return true;
+            PronunciationSettings settings = new PronunciationStore(projectRoot).Settings;
+            if (settings.enabled && WordPronouncer.GetEnglishVoices().Count > 0) return true;
+            bool hasAlternative = study.Settings.problemFreeExample
+                || study.Settings.problemFreeSpelling;
+            DialogResult choice = MessageBox.Show(this,
+                "当前没有可用的英语语音，错题自由模式的听写无法播放。\n\n"
+                + "选择“是”打开 Windows 语音设置；选择“否”仅在本次练习中关闭听写；选择“取消”返回。",
+                "听写语音不可用", MessageBoxButtons.YesNoCancel, MessageBoxIcon.Warning);
+            if (choice == DialogResult.Yes)
+            {
+                try { Process.Start(new ProcessStartInfo("ms-settings:speech") { UseShellExecute = true }); }
+                catch { ShowDarkDialog("语音设置", "无法打开系统设置，请手动安装 Windows 英语语音。", false); }
+                return false;
+            }
+            if (choice != DialogResult.No) return false;
+            if (!hasAlternative)
+            {
+                ShowDarkDialog("无法临时关闭听写", "错题自由模式只启用了听写。请先在设置中启用另一种题型。", false);
+                return false;
+            }
+            includeDictation = false;
+            return true;
+        }
+
         private void AskNextQuestion()
         {
+            freeHistoryIndex = -1;
             freeFeedback = null; freeNextButton.Enabled = false; freeReplayButton.Enabled = false;
             inputLine.Enabled = true;
             logArea.ClearContent();
             currentWord = engine.GetNextQuestion();
+            UpdateFreeFavoriteButton();
+            UpdateFreeHistoryButtons();
             exampleRevealStage = 0;
             freeDictationMeaningShown = false;
             if (currentWord == null)
@@ -3074,13 +3414,13 @@ namespace EnglishDictationTool
 
         private bool IsFreeExampleActive()
         {
-            return freeFeedback == null && currentWord != null && engine.QuestionMode == "example"
+            return freeHistoryIndex < 0 && freeFeedback == null && currentWord != null && engine.QuestionMode == "example"
                 && engine.GetExampleQuestion() != null;
         }
 
         private bool IsFreeDictationActive()
         {
-            return freeFeedback == null && currentWord != null && engine.QuestionMode == "dictation";
+            return freeHistoryIndex < 0 && freeFeedback == null && currentWord != null && engine.QuestionMode == "dictation";
         }
 
         private void RevealFreeDictationMeaning()
@@ -3148,7 +3488,7 @@ namespace EnglishDictationTool
 
         private void SubmitAnswer()
         {
-            if (freeFeedback != null || freePaused || freeSummary != null) return;
+            if (freeHistoryIndex >= 0 || freeFeedback != null || freePaused || freeSummary != null) return;
             if (IsFreeExampleActive() && !ExampleRevealFlow.ReadyToSubmit(exampleRevealStage,
                 study.Settings.exampleFirstLetterHints)) return;
             string userInput = inputLine.Text.Trim();
@@ -3173,14 +3513,34 @@ namespace EnglishDictationTool
             List<string> accepted = answeredMode == "example" && engine.GetExampleQuestion() != null
                 ? new List<string>(engine.GetExampleQuestion().answers)
                 : study.AcceptedAnswers(currentWord);
-            AnswerOutcome outcome = engine.CheckAnswer(userInput);
+            bool problemFree = practice.Current != null
+                && practice.Current.kind == "problem_free";
+            bool firstAttempt = practice.Current == null || !practice.Attempts.Any(x =>
+                x.sessionId == practice.Current.id && x.taskIndex == answeredIndex);
+            DateTime answeredAt = DateTime.Now;
+            AnswerOutcome outcome = problemFree
+                ? engine.CheckAnswer(userInput, delegate(WordEntry word, bool correct,
+                    string mode, bool first)
+                {
+                    return notebooks.RecordStudyAnswer(word, correct, mode, first,
+                        study.Settings.exampleCorrectTarget,
+                        study.Settings.dictationCorrectTarget,
+                        study.Settings.spellingCorrectTarget, answeredAt);
+                }, firstAttempt)
+                : engine.CheckAnswer(userInput);
+            AnswerFeedback answeredFeedback = new AnswerFeedback { word = answeredWord,
+                answer = outcome.CorrectAnswer, input = userInput, mode = answeredMode,
+                correct = outcome.Correct, difference = outcome.Correct ? string.Empty
+                    : SpellingDifference.Report(userInput, accepted) };
             if (practice.Current != null && practice.Current.active)
                 practice.RecordAttempt(answeredWord, answeredMode, answeredIndex,
-                    outcome.Correct, DateTime.Now);
+                    outcome.Correct, answeredAt, answeredFeedback);
+            if (problemFree)
+                notebooks.RecordProblemReviewActivity(answeredWord, outcome.Correct,
+                    outcome.Correct && ProblemFreeWordCompleted(answeredWord, answeredIndex),
+                    answeredAt);
             if (!outcome.Correct && (engine.RetryOnWrong || engine.GetNextQuestion() == null)) engine.CurrentIndex--;
-            freeFeedback = new AnswerFeedback { word = answeredWord, answer = outcome.CorrectAnswer,
-                input = userInput, mode = answeredMode, correct = outcome.Correct,
-                difference = outcome.Correct ? string.Empty : SpellingDifference.Report(userInput, accepted) };
+            freeFeedback = answeredFeedback;
             practice.SavePosition(engine, string.Empty, 0, false, false);
             practice.SaveFeedback(freeFeedback);
             if (engine.GetNextQuestion() == null)
@@ -3201,6 +3561,20 @@ namespace EnglishDictationTool
             if (!outcome.Correct) ReplayFreeWord();
         }
 
+        private bool ProblemFreeWordCompleted(WordEntry word, int currentTaskIndex)
+        {
+            if (practice.Current == null || practice.Current.kind != "problem_free") return false;
+            string key = DataLoader.WordKey(word);
+            List<int> planned = engine.CurrentDeck.Select((entry, index) => new { entry, index })
+                .Where(x => x.entry != null && DataLoader.WordKey(x.entry) == key)
+                .Select(x => x.index).Distinct().ToList();
+            HashSet<int> correct = new HashSet<int>(practice.Attempts.Where(x =>
+                    x.sessionId == practice.Current.id && x.correct)
+                .Select(x => x.taskIndex));
+            correct.Add(currentTaskIndex);
+            return planned.Count > 0 && planned.All(correct.Contains);
+        }
+
         private void LayoutContactLinks(Control settings)
         {
             if (githubLink == null) return;
@@ -3214,10 +3588,136 @@ namespace EnglishDictationTool
             catch (Exception error) { ShowDarkDialog("无法打开链接", error.Message, false); }
         }
 
+        private List<PracticeAttempt> FreeHistory()
+        {
+            return practice.Current == null ? new List<PracticeAttempt>() : practice.Attempts
+                .Where(x => x.sessionId == practice.Current.id).ToList();
+        }
+
+        private WordEntry FreeDisplayedWord()
+        {
+            if (freeHistoryIndex < 0) return freeFeedback == null ? currentWord : freeFeedback.word;
+            List<PracticeAttempt> history = FreeHistory();
+            if (freeHistoryIndex >= history.Count) return null;
+            PracticeAttempt attempt = history[freeHistoryIndex];
+            if (attempt.feedback != null) return attempt.feedback.word;
+            WordEntry word = engine.CurrentDeck.FirstOrDefault(x => GameEngine.CleanEnglish(x) == attempt.word);
+            return word ?? notebooks.Records.Select(x => x.word)
+                .FirstOrDefault(x => GameEngine.CleanEnglish(x) == attempt.word)
+                ?? new WordEntry { english = attempt.word, chinese = string.Empty, examples = string.Empty };
+        }
+
+        private void UpdateFreeFavoriteButton()
+        {
+            if (freeFavoriteButton == null) return;
+            WordEntry word = FreeDisplayedWord();
+            freeFavoriteButton.Enabled = word != null && !freePaused && freeSummary == null;
+            freeFavoriteButton.Text = FavoriteUi.ButtonText(notebooks, word);
+            freeFavoriteTip.SetToolTip(freeFavoriteButton, "点击多选收藏归属；"
+                + ShortcutText((Keys)study.Settings.favoriteKey) + " 快捷操作“"
+                + notebooks.GetFavoriteFolder(notebooks.DefaultFavoriteFolderId).name
+                + "”\n当前归属：" + notebooks.FavoriteFolderNames(word));
+        }
+
+        private void ToggleFreeFavorite()
+        {
+            if (freePaused || freeSummary != null) return;
+            WordEntry word = FreeDisplayedWord();
+            if (word == null) return;
+            bool added = notebooks.ToggleFavorite(word);
+            UpdateFreeFavoriteButton();
+            if (freePracticeWindow.Visible) freeFavoriteTip.Show((added ? "已加入“" : "已移出“")
+                + notebooks.GetFavoriteFolder(notebooks.DefaultFavoriteFolderId).name + "”", freeFavoriteButton, 1800);
+        }
+
+        private void EditFreeFavoriteFolders()
+        {
+            if (freePaused || freeSummary != null) return;
+            WordEntry word = FreeDisplayedWord(); if (word == null) return;
+            FavoriteUi.EditWord(freePracticeWindow, notebooks, word); UpdateFreeFavoriteButton();
+            if (inputLine.Enabled) inputLine.Focus();
+        }
+
+        private void UpdateFreeHistoryButtons()
+        {
+            if (freePreviousButton == null) return;
+            freePreviousButton.Enabled = !freePaused && (freeHistoryIndex < 0
+                ? FreeHistory().Count > 0 : freeHistoryIndex > 0);
+            if (freeHistoryIndex >= 0)
+            { freeNextButton.Enabled = true; freeNextButton.Text = "下一页"; }
+        }
+
+        private void PreviousFreePage()
+        {
+            if (freePaused || freeSummary != null) return;
+            List<PracticeAttempt> history = FreeHistory();
+            if (history.Count == 0 || freeHistoryIndex == 0) return;
+            if (freeHistoryIndex < 0)
+            {
+                if (practice.Current.active) practice.SavePosition(engine, inputLine.Text,
+                    exampleRevealStage, freeDictationMeaningShown, freePaused);
+                freeHistoryIndex = history.Count - 1;
+            }
+            else freeHistoryIndex--;
+            ShowFreeHistory();
+        }
+
+        private void NextFreePage()
+        {
+            if (freePaused || freeHistoryIndex < 0) return;
+            if (freeHistoryIndex + 1 < FreeHistory().Count)
+            { freeHistoryIndex++; ShowFreeHistory(); }
+            else ReturnToLiveFreePage();
+        }
+
+        private void ShowFreeHistory()
+        {
+            List<PracticeAttempt> history = FreeHistory();
+            if (freeHistoryIndex < 0 || freeHistoryIndex >= history.Count)
+            { ReturnToLiveFreePage(); return; }
+            freePronouncer.Stop();
+            PracticeAttempt attempt = history[freeHistoryIndex];
+            WordEntry word = FreeDisplayedWord();
+            if (attempt.feedback != null) attempt.feedback.Render(logArea, appearance);
+            else
+            {
+                logArea.ClearContent();
+                logArea.Add(GameEngine.CleanEnglish(word), "word");
+                logArea.AddExample(word);
+                logArea.Add(PartOfSpeech.DisplayChinese(word), "meaning");
+                logArea.Add(attempt.correct ? "本题答对" : "本题答错", attempt.correct ? "correct" : "error");
+            }
+            logArea.Add("只读回看 " + (freeHistoryIndex + 1) + " / " + history.Count
+                + "\n返回当前题继续作答，不修改进度或记录。", "normal");
+            inputLine.Clear(); inputLine.Enabled = false;
+            freeReplayButton.Enabled = freePronunciationSettings.enabled;
+            practice.SetViewedAttempt(freeHistoryIndex);
+            UpdateFreeHistoryButtons(); UpdateFreeFavoriteButton();
+        }
+
+        private void ReturnToLiveFreePage()
+        {
+            freeHistoryIndex = -1; practice.SetViewedAttempt(-1);
+            freeNextButton.Text = "下一题";
+            if (freeFeedback != null) ShowFreeFeedback();
+            else if (currentWord == null) AskNextQuestion();
+            else
+            {
+                logArea.ClearContent(); ReprintCurrentQuestion();
+                inputLine.Enabled = !freePaused;
+                inputLine.Text = practice.Current.input ?? string.Empty;
+                inputLine.SelectionStart = inputLine.TextLength;
+                freeNextButton.Enabled = false;
+                freeReplayButton.Enabled = freePronunciationSettings.enabled;
+                if (inputLine.Enabled) inputLine.Focus();
+            }
+            UpdateFreeHistoryButtons(); UpdateFreeFavoriteButton();
+        }
+
         private void ReplayFreeWord()
         {
             if (freePaused || !freePronunciationSettings.enabled) return;
-            WordEntry word = freeFeedback == null ? currentWord : freeFeedback.word;
+            WordEntry word = FreeDisplayedWord();
             if (word == null) return;
             string error;
             if (!freePronouncer.Speak(GameEngine.CleanEnglish(word), out error) && !string.IsNullOrEmpty(error))
@@ -3235,11 +3735,13 @@ namespace EnglishDictationTool
             freeNextButton.Text = engine.GetNextQuestion() == null ? "查看结算" : "下一题";
             freeEndButton.Enabled = practice.Current != null && practice.Current.active;
             freeNextButton.Focus();
+            UpdateFreeFavoriteButton(); UpdateFreeHistoryButtons();
         }
 
         private void ContinueFreeFeedback()
         {
             if (freePaused) return;
+            if (freeHistoryIndex >= 0) { NextFreePage(); return; }
             freePronouncer.Stop(); freeFeedback = null; practice.SaveFeedback(null);
             if (engine.GetNextQuestion() == null) ShowFreeSummary(false);
             else AskNextQuestion();
@@ -3248,7 +3750,10 @@ namespace EnglishDictationTool
         private void EndFreeList()
         {
             if (freePaused || practice.Current == null || !practice.Current.active) return;
-            string message = "确定结束当前自由练习列表并查看结算吗？"
+            if (freeHistoryIndex >= 0) ReturnToLiveFreePage();
+            string modeName = practice.Current.kind == "problem_free"
+                ? "错题自由模式" : "自由练习";
+            string message = "确定结束当前“" + modeName + "”列表并查看结算吗？"
                 + (study.Settings.backupBeforeManualEnd ? "\n结束前将创建手动备份，可在设置中关闭。" : "");
             if (MessageBox.Show(freePracticeWindow, message, "结束列表", MessageBoxButtons.YesNo) != DialogResult.Yes) return;
             if (study.Settings.backupBeforeManualEnd && !ManualBackup()) return;
@@ -3262,6 +3767,7 @@ namespace EnglishDictationTool
             practice.SavePosition(engine, string.Empty, 0, false, false);
             practice.FinishCurrent(); practice.SaveFeedback(null);
             freeFeedback = null; freePronouncer.Stop();
+            freeHistoryIndex = -1; practice.SetViewedAttempt(-1);
             freeSummary = new SessionSummaryView(SessionSummary.FromPractice(practice.Current, practice.Attempts, manual),
                 study.Settings.timerEnabled, study.Settings.timerPrecision);
             freeSummary.SetAppearance(appearance, "free");
@@ -3363,6 +3869,13 @@ namespace EnglishDictationTool
         {
             PracticeSessionState session = practice.Current;
             if (session == null || !session.active || session.engine == null) return;
+            if (session.kind == "problem_free"
+                && !string.Equals(session.studyDate, StudyStore.StudyDayKey(DateTime.Now),
+                    StringComparison.Ordinal))
+            {
+                practice.FinishCurrent();
+                return;
+            }
             practice.Resume(engine);
             freeFeedback = session.feedback;
             freeEndButton.Enabled = true;
@@ -3376,7 +3889,8 @@ namespace EnglishDictationTool
             freeDictationMeaningShown = session.dictationMeaningShown;
             freePaused = session.paused;
             logArea.ClearContent();
-            AppendToLog("--- 继续自由练习 ---", "normal");
+            AppendToLog(session.kind == "problem_free"
+                ? "--- 继续错题自由模式 ---" : "--- 继续自由练习 ---", "normal");
             ReprintCurrentQuestion();
             inputLine.Enabled = !freePaused;
             inputLine.Text = session.input ?? string.Empty;
@@ -3394,6 +3908,9 @@ namespace EnglishDictationTool
             if (freeFeedback != null) ShowFreeFeedback();
             if (!freePaused && freePracticeWindow != null && freePracticeWindow.Visible)
                 inputLine.Focus();
+            freeHistoryIndex = session.viewedAttemptIndex ?? -1;
+            if (freeHistoryIndex >= 0) ShowFreeHistory();
+            UpdateFreeFavoriteButton(); UpdateFreeHistoryButtons();
         }
 
         private void StartFreeTimer(long initialMilliseconds)
@@ -3417,7 +3934,7 @@ namespace EnglishDictationTool
         private void BeginFreePauseOverlay(bool persist)
         {
             if (practice.Current == null || freeSummary != null) return;
-            if (persist) practice.SavePosition(engine, inputLine.Text, exampleRevealStage,
+            if (persist) practice.SavePosition(engine, freeHistoryIndex < 0 ? inputLine.Text : practice.Current.input, exampleRevealStage,
                 freeDictationMeaningShown, true);
             if (freeLearningTimer != null) freeLearningTimer.StopAndCommit();
             freePronouncer.Stop();
@@ -3448,13 +3965,14 @@ namespace EnglishDictationTool
             freePauseOverlay.Visible = false;
             freePauseButton.Text = "暂停自由练习";
             RefreshModeSelection();
-            inputLine.Enabled = true;
-            practice.SavePosition(engine, inputLine.Text, exampleRevealStage,
+            inputLine.Enabled = freeHistoryIndex < 0;
+            practice.SavePosition(engine, freeHistoryIndex < 0 ? inputLine.Text : practice.Current.input, exampleRevealStage,
                 freeDictationMeaningShown, false);
-            if (freeFeedback != null) ShowFreeFeedback();
+            if (freeHistoryIndex >= 0) ShowFreeHistory();
+            else if (freeFeedback != null) ShowFreeFeedback();
             else { logArea.ClearContent(); ReprintCurrentQuestion(); }
             if (freeLearningTimer != null) freeLearningTimer.Refresh();
-            inputLine.Focus();
+            if (inputLine.Enabled) inputLine.Focus();
         }
 
         private void ClearWrongWords()
@@ -3470,7 +3988,8 @@ namespace EnglishDictationTool
 
         private void UpdateReviewButtonCount()
         {
-            if (reviewButton != null) reviewButton.Text = "复习错题 (" + engine.WrongWords.Count + ")";
+            if (reviewButton != null) reviewButton.Text = "错题自由模式 ("
+                + notebooks.GetProblemWords().Count + ")";
         }
 
         private void AppendToLog(string message, string kind)
@@ -3633,6 +4152,18 @@ namespace EnglishDictationTool
 
                 if (args.Length >= 2 && args[0] == "--test-v136")
                     return V136Tests.Run(args[1]);
+
+                if (args.Length >= 2 && args[0] == "--test-v137")
+                    return V137Tests.Run(args[1]);
+
+                if (args.Length >= 2 && args[0] == "--test-v140")
+                    return V140Tests.Run(args[1]);
+
+                if (args.Length >= 2 && args[0] == "--test-favorite-folders")
+                    return FavoriteFolderTests.Run(args[1]);
+
+                if (args.Length >= 2 && args[0] == "--check-v140-state")
+                    return V140Tests.CheckCopiedState(args[1]);
 
                 if (args.Length >= 3 && args[0] == "--test-v120")
                 {

@@ -16,12 +16,15 @@ namespace EnglishDictationTool
         public DateTime answeredAt { get; set; }
         public bool correct { get; set; }
         public bool retry { get; set; }
+        public AnswerFeedback feedback { get; set; }
     }
 
     internal sealed class PracticeSessionState
     {
         public string id { get; set; }
         public DateTime createdAt { get; set; }
+        public string kind { get; set; }
+        public string studyDate { get; set; }
         public bool active { get; set; }
         public bool paused { get; set; }
         public PracticeEngineSnapshot engine { get; set; }
@@ -30,6 +33,7 @@ namespace EnglishDictationTool
         public bool dictationMeaningShown { get; set; }
         public long activeMilliseconds { get; set; }
         public AnswerFeedback feedback { get; set; }
+        public int? viewedAttemptIndex { get; set; }
     }
 
     internal sealed class PracticeState
@@ -65,13 +69,14 @@ namespace EnglishDictationTool
         public IList<PracticeAttempt> Attempts { get { return state.attempts.AsReadOnly(); } }
         public IList<PracticeSessionState> Completed { get { return state.completed.AsReadOnly(); } }
 
-        public void Begin(GameEngine engine)
+        public void Begin(GameEngine engine, string kind = "free")
         {
             if (state.current != null && state.current.active) FinishCurrent();
             state.current = new PracticeSessionState
             {
                 id = DateTime.Now.ToString("yyyyMMdd_HHmmss") + "_" + Guid.NewGuid().ToString("N").Substring(0, 6),
-                createdAt = DateTime.Now, active = true, paused = false,
+                createdAt = DateTime.Now, kind = string.IsNullOrWhiteSpace(kind) ? "free" : kind,
+                studyDate = StudyStore.StudyDayKey(DateTime.Now), active = true, paused = false,
                 engine = engine.ExportState(), input = string.Empty
             };
             Save();
@@ -97,7 +102,7 @@ namespace EnglishDictationTool
         }
 
         public void RecordAttempt(WordEntry word, string mode, int taskIndex, bool correct,
-            DateTime answeredAt)
+            DateTime answeredAt, AnswerFeedback feedback = null)
         {
             if (state.current == null || !state.current.active) return;
             bool retry = state.attempts.Any(x => x.sessionId == state.current.id
@@ -107,7 +112,7 @@ namespace EnglishDictationTool
                 sessionId = state.current.id,
                 word = GameEngine.CleanEnglish(word), mode = mode,
                 taskIndex = taskIndex, correct = correct, retry = retry,
-                answeredAt = answeredAt
+                answeredAt = answeredAt, feedback = feedback
             });
             Save();
         }
@@ -130,6 +135,13 @@ namespace EnglishDictationTool
         {
             if (state.current == null) return;
             state.current.feedback = feedback;
+            Save();
+        }
+
+        public void SetViewedAttempt(int index)
+        {
+            if (state.current == null) return;
+            state.current.viewedAttemptIndex = index < 0 ? (int?)null : index;
             Save();
         }
 

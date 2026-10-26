@@ -86,6 +86,190 @@ namespace EnglishDictationTool
         }
     }
 
+    internal sealed class ListReviewSelectionForm : Form
+    {
+        private sealed class ListChoice
+        {
+            public StudyList List { get; set; }
+            public override string ToString()
+            {
+                string kind = List.kind == "new" ? "新学列表" : "历史复习列表";
+                string date = List.createdAt == DateTime.MinValue
+                    ? List.studyDate : List.createdAt.ToString("yyyy-MM-dd HH:mm");
+                int count = List.items == null ? 0 : List.items.Count(x => x != null && !x.released);
+                return date + "    " + kind + "    " + count + " 词    #" + List.id;
+            }
+        }
+
+        private readonly ListBox available = new ListBox();
+        private readonly ListBox selected = new ListBox();
+        private readonly Label summary = new Label();
+        private readonly Dictionary<string, ListChoice> choices;
+        private readonly List<string> availableSelectionOrder = new List<string>();
+
+        public bool UseAutomatic { get; private set; }
+        public List<string> SelectedIds { get; private set; }
+
+        public ListReviewSelectionForm(StudyStore store)
+        {
+            ModernUI.ApplyAppIcon(this);
+            Text = "选择历史列表";
+            StartPosition = FormStartPosition.CenterParent;
+            ClientSize = ModernUI.FitWindow(980, 620);
+            MinimumSize = new Size(820, 520);
+            BackColor = Theme.Background;
+            ForeColor = Theme.Text;
+            Font = Theme.UiFont;
+            SelectedIds = new List<string>();
+            choices = store.ReviewableLists().Select(x => new ListChoice { List = x })
+                .ToDictionary(x => x.List.id, StringComparer.OrdinalIgnoreCase);
+
+            TableLayoutPanel root = new TableLayoutPanel { Dock = DockStyle.Fill,
+                Padding = new Padding(22), ColumnCount = 3, RowCount = 4,
+                BackColor = Theme.Background };
+            root.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 47));
+            root.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 116));
+            root.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 53));
+            root.RowStyles.Add(new RowStyle(SizeType.Absolute, 54));
+            root.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+            root.RowStyles.Add(new RowStyle(SizeType.Absolute, 54));
+            root.RowStyles.Add(new RowStyle(SizeType.Absolute, 58));
+            Controls.Add(root);
+
+            Label availableTitle = new Label { Text = "可选择的历史列表",
+                Dock = DockStyle.Fill, TextAlign = ContentAlignment.MiddleLeft,
+                Font = new Font(Theme.UiFont, FontStyle.Bold) };
+            Label selectedTitle = new Label { Text = "已选顺序（最先选择的最先复习）",
+                Dock = DockStyle.Fill, TextAlign = ContentAlignment.MiddleLeft,
+                Font = new Font(Theme.UiFont, FontStyle.Bold) };
+            root.Controls.Add(availableTitle, 0, 0);
+            root.Controls.Add(selectedTitle, 2, 0);
+
+            ConfigureList(available);
+            ConfigureList(selected);
+            foreach (ListChoice choice in choices.Values.OrderByDescending(x => x.List.createdAt))
+                available.Items.Add(choice);
+            available.SelectedIndexChanged += delegate
+            {
+                HashSet<string> current = new HashSet<string>(available.SelectedItems
+                    .Cast<ListChoice>().Select(x => x.List.id), StringComparer.OrdinalIgnoreCase);
+                availableSelectionOrder.RemoveAll(x => !current.Contains(x));
+                foreach (ListChoice choice in available.SelectedItems.Cast<ListChoice>())
+                    if (!availableSelectionOrder.Contains(choice.List.id,
+                        StringComparer.OrdinalIgnoreCase))
+                        availableSelectionOrder.Add(choice.List.id);
+            };
+            root.Controls.Add(available, 0, 1);
+            root.Controls.Add(selected, 2, 1);
+
+            FlowLayoutPanel actions = new FlowLayoutPanel { Dock = DockStyle.Fill,
+                FlowDirection = FlowDirection.TopDown, WrapContents = false,
+                Padding = new Padding(8, 32, 8, 8), BackColor = Theme.Background };
+            Button add = new ModernButton { Text = "添加 →", Width = 94, Height = 42 };
+            Button remove = new ModernButton { Text = "← 移除", Width = 94, Height = 42 };
+            add.Click += delegate { AddSelection(); };
+            remove.Click += delegate { RemoveSelection(); };
+            actions.Controls.Add(add);
+            actions.Controls.Add(remove);
+            root.Controls.Add(actions, 1, 1);
+            available.DoubleClick += delegate { AddSelection(); };
+            selected.DoubleClick += delegate { RemoveSelection(); };
+
+            summary.Dock = DockStyle.Fill;
+            summary.TextAlign = ContentAlignment.MiddleLeft;
+            root.Controls.Add(summary, 0, 2);
+            root.SetColumnSpan(summary, 2);
+            Button clear = new ModernButton { Text = "清空已选列表", Dock = DockStyle.Fill,
+                Height = 42, Subtle = true, Margin = new Padding(8, 6, 0, 6) };
+            clear.Click += delegate { selected.Items.Clear(); UpdateSummary(); };
+            root.Controls.Add(clear, 2, 2);
+
+            FlowLayoutPanel footer = new FlowLayoutPanel { Dock = DockStyle.Fill,
+                FlowDirection = FlowDirection.RightToLeft, WrapContents = false,
+                BackColor = Theme.Background };
+            Button manual = new ModernButton { Text = "按已选顺序开始", Width = 190, Height = 44 };
+            Button automatic = new ModernButton { Text = "按默认规则开始", Width = 170,
+                Height = 44, Subtle = true };
+            Button cancel = new ModernButton { Text = "取消", Width = 110,
+                Height = 44, Subtle = true, DialogResult = DialogResult.Cancel };
+            manual.Click += delegate
+            {
+                SelectedIds = selected.Items.Cast<ListChoice>().Select(x => x.List.id).ToList();
+                if (SelectedIds.Count == 0)
+                {
+                    MessageBox.Show(this, "请至少选择一份历史列表，或使用默认规则开始。",
+                        "选择历史列表", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                    return;
+                }
+                UseAutomatic = false;
+                DialogResult = DialogResult.OK;
+                Close();
+            };
+            automatic.Click += delegate
+            {
+                UseAutomatic = true;
+                SelectedIds.Clear();
+                DialogResult = DialogResult.OK;
+                Close();
+            };
+            footer.Controls.Add(manual);
+            footer.Controls.Add(automatic);
+            footer.Controls.Add(cancel);
+            root.Controls.Add(footer, 0, 3);
+            root.SetColumnSpan(footer, 3);
+
+            AcceptButton = manual;
+            CancelButton = cancel;
+            UpdateSummary();
+            Theme.Apply(this);
+        }
+
+        private static void ConfigureList(ListBox list)
+        {
+            list.Dock = DockStyle.Fill;
+            list.IntegralHeight = false;
+            list.SelectionMode = SelectionMode.MultiExtended;
+            list.BackColor = ModernUI.Card;
+            list.ForeColor = Theme.Text;
+            list.BorderStyle = BorderStyle.FixedSingle;
+            list.HorizontalScrollbar = true;
+        }
+
+        private void AddSelection()
+        {
+            List<ListChoice> additions = availableSelectionOrder.Where(choices.ContainsKey)
+                .Select(x => choices[x]).ToList();
+            foreach (ListChoice choice in available.SelectedItems.Cast<ListChoice>())
+                if (!additions.Any(x => string.Equals(x.List.id, choice.List.id,
+                    StringComparison.OrdinalIgnoreCase))) additions.Add(choice);
+            foreach (ListChoice choice in additions)
+                if (!selected.Items.Cast<ListChoice>().Any(x =>
+                    string.Equals(x.List.id, choice.List.id, StringComparison.OrdinalIgnoreCase)))
+                    selected.Items.Add(choice);
+            available.ClearSelected();
+            availableSelectionOrder.Clear();
+            UpdateSummary();
+        }
+
+        private void RemoveSelection()
+        {
+            foreach (ListChoice choice in selected.SelectedItems.Cast<ListChoice>().ToList())
+                selected.Items.Remove(choice);
+            UpdateSummary();
+        }
+
+        private void UpdateSummary()
+        {
+            HashSet<string> words = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (ListChoice choice in selected.Items.Cast<ListChoice>())
+                foreach (StudyItem item in choice.List.items ?? new List<StudyItem>())
+                    if (item != null && item.word != null && !item.released)
+                        words.Add(DataLoader.WordKey(item.word));
+            summary.Text = "已选 " + selected.Items.Count + " 份列表，去重后 "
+                + words.Count + " 个单词。重复单词保留第一次出现的位置。";
+        }
+    }
+
     internal sealed class StudySessionForm : Form
     {
         private readonly StudyStore store;
@@ -106,6 +290,9 @@ namespace EnglishDictationTool
         private readonly Button backup;
         private readonly Button replay;
         private readonly Button pause;
+        private readonly Button favorite;
+        private readonly ToolTip favoriteTip = new ToolTip();
+        private readonly FavoriteShortcutFilter favoriteShortcuts;
         private readonly ModernProgressBar progress;
         private readonly Label timerLabel;
         private readonly PauseOverlay pauseOverlay;
@@ -227,10 +414,10 @@ namespace EnglishDictationTool
             };
             layout.Controls.Add(answer, 0, 2);
             TableLayoutPanel actions = new TableLayoutPanel { Dock = DockStyle.Fill,
-                ColumnCount = 7, RowCount = 1, Padding = new Padding(0, 7, 0, 0),
+                ColumnCount = 8, RowCount = 1, Padding = new Padding(0, 7, 0, 0),
                 BackColor = Theme.Background };
-            for (int column = 0; column < 7; column++)
-                actions.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 14.2857f));
+            for (int column = 0; column < 8; column++)
+                actions.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 12.5f));
             previous = ActionButton("上一页", delegate { Previous(); });
             advance = ActionButton("下一步", delegate { AdvanceOrExample(); });
             master = ActionButton("斩当前词", delegate { Master(); });
@@ -241,6 +428,7 @@ namespace EnglishDictationTool
             });
             replay = ActionButton("重播单词", delegate { ReplayWord(); });
             pause = ActionButton("暂停", delegate { TogglePause(); });
+            favorite = ActionButton("收藏到…", delegate { EditFavoriteFolders(); });
             actions.Controls.Add(previous, 0, 0);
             actions.Controls.Add(advance, 1, 0);
             actions.Controls.Add(master, 2, 0);
@@ -248,6 +436,7 @@ namespace EnglishDictationTool
             actions.Controls.Add(backup, 4, 0);
             actions.Controls.Add(replay, 5, 0);
             actions.Controls.Add(pause, 6, 0);
+            actions.Controls.Add(favorite, 7, 0);
             layout.Controls.Add(actions, 0, 3);
             progress = new ModernProgressBar { Dock = DockStyle.Fill,
                 Margin = new Padding(0, 6, 0, 0) };
@@ -295,6 +484,8 @@ namespace EnglishDictationTool
             Controls.Add(pauseOverlay);
             if (isPaused)
                 Shown += delegate { BeginPauseOverlay(false); };
+            favoriteShortcuts = new FavoriteShortcutFilter(this,
+                delegate { return (Keys)store.Settings.favoriteKey; }, ToggleFavorite);
         }
 
         protected override void OnFormClosed(FormClosedEventArgs e)
@@ -306,6 +497,7 @@ namespace EnglishDictationTool
             rolloverTimer.Stop();
             rolloverTimer.Dispose();
             pronouncer.Dispose();
+            favoriteShortcuts.Dispose(); favoriteTip.Dispose();
             base.OnFormClosed(e);
         }
 
@@ -348,6 +540,7 @@ namespace EnglishDictationTool
                 return true;
             }
             if (isPaused) return true;
+            if (keyData == (Keys)store.Settings.favoriteKey) { ToggleFavorite(); return true; }
             if (feedback != null)
             {
                 if (keyData == Keys.Enter) { ContinueFeedback(); return true; }
@@ -421,10 +614,42 @@ namespace EnglishDictationTool
             store.ClearPause(openedListId);
             ShowStep();
             learningTimer.Refresh();
-            answer.Focus();
+            if (answer.Enabled) answer.Focus(); else display.Focus();
         }
 
         private void ShowStep()
+        {
+            RenderStep();
+            favorite.Enabled = shown != null && !isPaused && summaryView == null;
+            UpdateFavoriteButton();
+        }
+
+        private void ToggleFavorite()
+        {
+            if (isPaused || summaryView != null || shown == null) return;
+            bool added = notebooks.ToggleFavorite(shown);
+            UpdateFavoriteButton();
+            FavoriteFolder target = notebooks.GetFavoriteFolder(notebooks.DefaultFavoriteFolderId);
+            if (Visible) favoriteTip.Show((added ? "已加入“" : "已移出“") + target.name + "”", favorite, 1800);
+        }
+
+        private void UpdateFavoriteButton()
+        {
+            favorite.Text = FavoriteUi.ButtonText(notebooks, shown);
+            favoriteTip.SetToolTip(favorite, "点击多选收藏归属；"
+                + new KeysConverter().ConvertToString((Keys)store.Settings.favoriteKey)
+                + " 快捷加入或移出“" + notebooks.GetFavoriteFolder(notebooks.DefaultFavoriteFolderId).name + "”"
+                + "\n当前归属：" + notebooks.FavoriteFolderNames(shown));
+        }
+
+        private void EditFavoriteFolders()
+        {
+            if (isPaused || summaryView != null || shown == null) return;
+            FavoriteUi.EditWord(this, notebooks, shown); UpdateFavoriteButton();
+            if (answer.Enabled) answer.Focus(); else display.Focus();
+        }
+
+        private void RenderStep()
         {
             if (summaryView != null) return;
             if (feedback != null) { ShowFeedback(); return; }
@@ -498,7 +723,7 @@ namespace EnglishDictationTool
                 previous.Enabled = list.previewCursor > 0;
                 advance.Enabled = true;
                 advance.Text = list.previewStage == 2 ? "下一个词" : "显示下一层";
-                advance.Focus();
+                display.Focus();
                 master.Enabled = true;
                 undo.Enabled = store.UndoCount > 0;
                 replay.Enabled = pronunciationSettings.enabled;
