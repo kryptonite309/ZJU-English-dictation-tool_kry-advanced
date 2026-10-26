@@ -47,7 +47,7 @@ namespace EnglishDictationTool
 
     internal sealed class UpdateService
     {
-        public const string CurrentVersion = "1.4.0";
+        public const string CurrentVersion = "1.4.1";
         private const string ReleasesApi = "https://api.github.com/repos/kryptonite309/ZJU-English-dictation-tool_kry-advanced/releases/latest";
         private readonly string root;
         private readonly BackupService backups;
@@ -104,7 +104,8 @@ namespace EnglishDictationTool
                 throw new InvalidDataException("GitHub Release 的版本号格式无法识别：" + tag);
             Version current = new Version(CurrentVersion);
             if (latest <= current) return null;
-            object[] assets = release.ContainsKey("assets") ? release["assets"] as object[] : null;
+            System.Collections.IEnumerable assets = release.ContainsKey("assets")
+                ? release["assets"] as System.Collections.IEnumerable : null;
             if (assets == null) throw new InvalidDataException("新版本没有可下载文件。");
             string expectedZipName = ReleaseAssetNames.UpgradePackageName(latest);
             Dictionary<string, object> zip = assets.Cast<Dictionary<string, object>>()

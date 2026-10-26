@@ -46,12 +46,24 @@ namespace EnglishDictationTool
             catch (InvalidDataException) { mismatchRejected = true; }
             if (!mismatchRejected) failures.Add("checksum filename mismatch");
 
+            string releaseJson = "{\"tag_name\":\"v9.9.9\",\"assets\":["
+                + "{\"name\":\"" + upgradeName + "\",\"browser_download_url\":\"https://example.invalid/upgrade.zip\"},"
+                + "{\"name\":\"SHA256SUMS.txt\",\"browser_download_url\":\"https://example.invalid/SHA256SUMS.txt\"}]}";
+            Dictionary<string, object> parsed = new JavaScriptSerializer()
+                .Deserialize<Dictionary<string, object>>(releaseJson);
+            System.Collections.IEnumerable parsedAssets = parsed["assets"] as System.Collections.IEnumerable;
+            int parsedCount = 0;
+            if (parsedAssets != null) foreach (object asset in parsedAssets)
+                if (asset is Dictionary<string, object>) parsedCount++;
+            if (parsedCount != 2) failures.Add("framework JSON asset collection compatibility");
+
             Dictionary<string, object> report = new Dictionary<string, object>
             {
                 { "ok", failures.Count == 0 },
                 { "fullPackage", fullName },
                 { "upgradePackage", upgradeName },
                 { "checksumFile", ReleaseAssetNames.ChecksumFileName },
+                { "frameworkAssetsType", parsed["assets"].GetType().FullName },
                 { "failures", failures }
             };
             File.WriteAllText(Path.Combine(outputDirectory, "v136-report.json"),

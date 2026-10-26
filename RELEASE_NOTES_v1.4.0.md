@@ -1,5 +1,7 @@
 # v1.4.0 收藏夹与复习流程更新
 
+> 更新器修复提示　v1.4.0 及更早版本需要手动升级一次。请下载 [v1.4.1 修复版](https://github.com/kryptonite309/ZJU-English-dictation-tool_kry-advanced/releases/tag/v1.4.1) 的升级包，保留原有学习数据和个人设置。下面保留 v1.4.0 的历史更新记录。
+
 本次发布包含 v1.3.6 之后的复习流程调整，以及 v1.4.0 的多收藏夹功能。
 
 ## 收藏与单词管理

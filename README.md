@@ -1,6 +1,8 @@
 # 大英默写器 KRY 增强版
 
-基于 [Lucent-Snow 的 ZJU 大英默写器](https://github.com/Lucent-Snow/ZJU-English-dictation-tool) 制作的 Windows 个人增强版，当前版本为 **v1.4.0**。增强版使用 C#、Windows Forms 和 WPF，面向 Windows x64，保留自由练习，并增加长期学习、复习和单词管理功能。本项目与原项目没有官方关联。
+基于 [Lucent-Snow 的 ZJU 大英默写器](https://github.com/Lucent-Snow/ZJU-English-dictation-tool) 制作的 Windows 个人增强版，当前版本为 **v1.4.1**。增强版使用 C#、Windows Forms 和 WPF，面向 Windows x64，保留自由练习，并增加长期学习、复习和单词管理功能。本项目与原项目没有官方关联。
+
+**更新修复提示**　v1.4.0 及更早版本的更新器存在附件解析问题，请从 [v1.4.1 发布页](https://github.com/kryptonite309/ZJU-English-dictation-tool_kry-advanced/releases/tag/v1.4.1) 手动下载升级包，关闭程序后合并升级文件。保留原有学习记录和个人设置，完成这一次升级后再使用软件内更新。
 
 ## 下载与运行
 
@@ -21,7 +23,7 @@
 - 新手引导附着在真实操作界面上，支持回放；壁纸库可以复用素材、管理归属和清理未使用文件。
 - 提供撤销、手动及自动备份，以及带 SHA-256 校验的 GitHub 更新检查。
 
-本次变化详见 [v1.4.0 更新说明](RELEASE_NOTES_v1.4.0.md)。
+功能变化详见 [v1.4.0 更新说明](RELEASE_NOTES_v1.4.0.md)，更新器修复详见 [v1.4.1 更新说明](RELEASE_NOTES_v1.4.1.md)。
 
 ## 升级
 
@@ -29,11 +31,11 @@
 
 已有用户下载升级包后，将其中的 `main.exe` 和 `data/preserve-archived-progress-v1.4.0.flag` 合并到原目录。`data` 是合并，不能先删除旧目录。原有的 `study_state.json`、`notebook_state.json`、`practice_state.json`、词库和个人外观设置均应保留。不要用其他人的学习状态文件替换自己的记录。
 
-v1.3.6 及以后版本支持软件内检查更新。Release 资产使用以下固定名称。
+v1.4.0 及更早版本请先手动升级，不能依靠旧更新器下载这次修复。v1.4.1 采用以下固定资产名称。
 
 ```text
-ZJU-English-dictation-tool_kry-advanced-v1.4.0-full.zip
-ZJU-English-dictation-tool_kry-advanced-v1.4.0-upgrade.zip
+ZJU-English-dictation-tool_kry-advanced-v1.4.1-full.zip
+ZJU-English-dictation-tool_kry-advanced-v1.4.1-upgrade.zip
 SHA256SUMS.txt
 ```
 

@@ -1,0 +1,8 @@
+大英默写器 KRY 增强版 v1.4.1
+
+完整解压后运行 main.exe，保持 main.exe 和 data 文件夹处于同一层。
+旧版用户请阅读 UPGRADE_v1.4.1.txt，完成一次手动升级。请保留原有学习记录和个人设置。
+默认 Ctrl+L 收藏，默认 Esc 暂停。软件帮助页可回放新手引导。
+不要删除 data/preserve-archived-progress-v1.4.0.flag。
+
+项目地址 https://github.com/kryptonite309/ZJU-English-dictation-tool_kry-advanced
