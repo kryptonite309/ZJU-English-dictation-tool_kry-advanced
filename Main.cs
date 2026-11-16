@@ -1380,7 +1380,7 @@ namespace EnglishDictationTool
         public FreePracticeForm()
         {
             ModernUI.ApplyAppIcon(this);
-            Text = "自由练习  KRY 增强版 v1.4.2";
+            Text = "自由练习  KRY 增强版 v1.4.3";
             StartPosition = FormStartPosition.CenterScreen;
             ClientSize = ModernUI.FitWindow(1320, 820);
             MinimumSize = new Size(920, 620);
@@ -1553,7 +1553,7 @@ namespace EnglishDictationTool
             freePronouncer = new WordPronouncer(freePronunciationSettings);
             keybindings = LoadKeybindings();
 
-            Text = "大英默写器  KRY 增强版 v1.4.2 背景清空测试版";
+            Text = "大英默写器  KRY 增强版 v1.4.3";
             StartPosition = FormStartPosition.CenterScreen;
             ClientSize = ModernUI.FitWindow(1540, 920);
             MinimumSize = new Size(1100, 720);
@@ -3364,39 +3364,14 @@ namespace EnglishDictationTool
             freeProgress.Visible = true;
             freeProgress.Total = Math.Max(1, progress[1]);
             freeProgress.Completed = Math.Min(engine.CurrentIndex, progress[1]);
-            if (engine.QuestionMode == "example")
+            ReprintCurrentQuestion();
+            if (engine.QuestionMode == "dictation")
             {
-                ExampleQuestion example = engine.GetExampleQuestion();
-                string blanked = example == null ? string.Empty : example.Render(false);
-                AppendToLog(string.Format("\n({0}/{1}) 例句填空:", progress[0], progress[1]), "normal");
-                AppendToLog("  " + blanked, "example");
-                AppendToLog("  按 " + ShortcutText((Keys)study.Settings.exampleHintKey)
-                    + (engine.ShowFirstLetter ? " 显示首字母提示。" : " 显示中文释义。"), "normal");
-            }
-            else if (engine.QuestionMode == "dictation")
-            {
-                AppendToLog(string.Format("\n({0}/{1}) 听写：请听发音后输入英文。",
-                    progress[0], progress[1]), "normal");
-                if (study.Settings.dictationMeaningHint)
-                    AppendToLog("  输入框为空时按 " + ShortcutText((Keys)study.Settings.exampleHintKey)
-                        + " 显示中文释义。", "normal");
                 string speechError;
                 if (!freePronouncer.Speak(GameEngine.CleanEnglish(currentWord), out speechError)
                     && !string.IsNullOrWhiteSpace(speechError))
                     AppendToLog("  听写朗读失败：" + speechError, "error");
                 lastFreeDictationSpoken = currentWord;
-            }
-            else
-            {
-                string hint = ExtractChineseHint(currentWord);
-                AppendToLog(string.Format("\n({0}/{1}) 请输入:", progress[0], progress[1]), "normal");
-                AppendToLog("  " + (string.IsNullOrEmpty(hint)
-                    ? PartOfSpeech.DisplayChinese(currentWord) : hint), "meaning");
-                if (engine.ShowFirstLetter)
-                {
-                    string answer = GameEngine.CleanEnglish(currentWord);
-                    if (answer.Length > 0) AppendToLog("  提示: " + answer.Substring(0, 1), "normal");
-                }
             }
 
             freeReplayButton.Enabled = currentWord != null && freePronunciationSettings.enabled;
@@ -3428,7 +3403,8 @@ namespace EnglishDictationTool
             if (!IsFreeDictationActive() || !study.Settings.dictationMeaningHint
                 || ExampleRevealFlow.HasTypedAnswer(inputLine.Text) || freeDictationMeaningShown) return;
             freeDictationMeaningShown = true;
-            AppendToLog("  中文释义：" + PartOfSpeech.DisplayChinese(currentWord), "meaning");
+            logArea.ClearContent();
+            ReprintCurrentQuestion();
             if (practice.Current != null && practice.Current.active)
                 practice.SavePosition(engine, inputLine.Text, exampleRevealStage, true, freePaused);
             inputLine.Focus();
@@ -3445,22 +3421,11 @@ namespace EnglishDictationTool
             }
 
             exampleRevealStage = ExampleRevealFlow.NextStage(exampleRevealStage, firstLetter);
-            ExampleQuestion example = engine.GetExampleQuestion();
-            if (ExampleRevealFlow.ShowsFirstLetter(exampleRevealStage, firstLetter)
-                && !ExampleRevealFlow.ShowsMeaning(exampleRevealStage, firstLetter))
-            {
-                string initial = string.IsNullOrWhiteSpace(example.answer)
-                    ? string.Empty : example.answer.Trim().Substring(0, 1);
-                AppendToLog("  首字母提示：" + initial, "normal");
-                AppendToLog("  再按 " + ShortcutText((Keys)study.Settings.exampleHintKey)
-                    + " 显示中文释义。", "normal");
-            }
-            else
-            {
-                AppendToLog("  中文释义：" + GameEngine.ChineseHint(currentWord), "meaning");
-                AppendToLog("  再按 " + ShortcutText((Keys)study.Settings.exampleHintKey)
-                    + " 提交答案。", "normal");
-            }
+            logArea.ClearContent();
+            ReprintCurrentQuestion();
+            if (practice.Current != null && practice.Current.active)
+                practice.SavePosition(engine, inputLine.Text, exampleRevealStage,
+                    freeDictationMeaningShown, freePaused);
             inputLine.Focus();
         }
 
@@ -3843,14 +3808,21 @@ namespace EnglishDictationTool
                 bool firstLetter = study.Settings.exampleFirstLetterHints;
                 string blanked = example == null ? string.Empty : example.Render(
                     ExampleRevealFlow.ShowsFirstLetter(exampleRevealStage, firstLetter));
-                AppendToLog(string.Format("({0}/{1}) 例句填空:", progress[0], progress[1]), "normal");
-                AppendToLog("  " + blanked, "normal");
+                AppendToLog(string.Format("\n({0}/{1}) 例句填空:", progress[0], progress[1]), "normal");
+                AppendToLog("  " + blanked, "example");
                 if (ExampleRevealFlow.ShowsMeaning(exampleRevealStage, firstLetter))
                     AppendToLog("  中文释义：" + GameEngine.ChineseHint(currentWord), "meaning");
+                int nextStage = ExampleRevealFlow.NextStage(exampleRevealStage, firstLetter);
+                string nextAction = ExampleRevealFlow.ReadyToSubmit(exampleRevealStage, firstLetter)
+                    ? " 提交答案。" : ExampleRevealFlow.ShowsFirstLetter(nextStage, firstLetter)
+                        && !ExampleRevealFlow.ShowsMeaning(nextStage, firstLetter)
+                        ? " 显示首字母提示。" : " 显示中文释义。";
+                AppendToLog("  按 " + ShortcutText((Keys)study.Settings.exampleHintKey)
+                    + nextAction, "normal");
             }
             else if (engine.QuestionMode == "dictation")
             {
-                AppendToLog(string.Format("({0}/{1}) 听写：请听发音后输入英文。",
+                AppendToLog(string.Format("\n({0}/{1}) 听写：请听发音后输入英文。",
                     progress[0], progress[1]), "normal");
                 if (freeDictationMeaningShown)
                     AppendToLog("  中文释义：" + PartOfSpeech.DisplayChinese(currentWord), "meaning");
@@ -3860,8 +3832,15 @@ namespace EnglishDictationTool
             }
             else
             {
-                AppendToLog(string.Format("({0}/{1}) 请输入:", progress[0], progress[1]), "normal");
-                AppendToLog("  " + ExtractChineseHint(currentWord), "normal");
+                string hint = ExtractChineseHint(currentWord);
+                AppendToLog(string.Format("\n({0}/{1}) 请输入:", progress[0], progress[1]), "normal");
+                AppendToLog("  " + (string.IsNullOrEmpty(hint)
+                    ? PartOfSpeech.DisplayChinese(currentWord) : hint), "meaning");
+                if (engine.ShowFirstLetter)
+                {
+                    string answer = GameEngine.CleanEnglish(currentWord);
+                    if (answer.Length > 0) AppendToLog("  提示: " + answer.Substring(0, 1), "normal");
+                }
             }
         }
 
